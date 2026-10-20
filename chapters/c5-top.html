@@ -23,7 +23,6 @@
 <body>
 <main class="rv-main">
   <div class="rv-stage" id="stage">
-    <canvas id="cv"></canvas>
     <div id="trailLegend"><i style="background:#ffd166"></i>軸の先が描く円（首ふり）<i style="background:#5cc8ff"></i>あまりのびていないばね<i style="background:#ff5d73"></i>よくのびているばね</div>
   </div>
   <aside class="rv-side">
@@ -108,13 +107,12 @@ const LEVELS = [
   { kappa: 0.08, target: 3.8, note: 'かたさ 8%。「倒れない速さ」と「ちぎれない速さ」の間はほんの少ししかない。' }
 ];
 
-let THREE, OrbitControls, CANNON, Solver;
+let THREE, CANNON, Solver;
 async function load(name, url) {
   try { const m = await import(url); RV.libOk(name); return m; }
   catch (e) { RV.libOk(name, false); console.error(name, e); throw e; }
 }
 THREE = await load('three.js', 'three');
-({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
 CANNON = await load('cannon-es', 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js');
 ({ Solver } = await load('odex', 'https://cdn.jsdelivr.net/npm/odex@3.0.0-rc.4/+esm'));
 
@@ -155,67 +153,202 @@ const Tth = n => 2 * Math.PI * PAR.I3 * n / (PAR.M * G * PAR.h);
 RV.$('#params').textContent = `このこまの値: 質量 M=${PAR.M.toFixed(2)} kg、h=${PAR.h.toFixed(3)} m、I=${PAR.I3.toFixed(3)} kg·m²。円盤のふちが床に触れる傾き ${(FALL * 180 / Math.PI).toFixed(0)}° で「倒れた」と判定。`;
 RV.rulesList('#rules', [2, 4, 5, 10]);
 
-// ---------- three.js ----------
-const canvas = RV.$('#cv');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0d10);
-const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 100);
-camera.position.set(3.8, 2.8, 4.6);
-const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, 0.7, 0);
-controls.enableDamping = true;
-RV.fitCanvas(canvas, (w, h, dpr) => { renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); });
-scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x20242a, 1.1));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(3, 6, 2); scene.add(sun);
-const floor = new THREE.Mesh(new THREE.CircleGeometry(4, 64), new THREE.MeshStandardMaterial({ color: 0x161c24, roughness: 0.95 }));
-floor.rotation.x = -Math.PI / 2; scene.add(floor);
-const grid = new THREE.PolarGridHelper(4, 16, 8, 64, 0x2b3542, 0x1e252e); grid.position.y = 0.002; scene.add(grid);
-const pivot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffd166 }));
-scene.add(pivot);
+// ---------- three.js（共通のリアル3Dキット：HDRI の映り込み・やわらかい影・ブルーム） ----------
+const { createWorld, M, tex } = await import('../shared/real3d.js');
+const R3 = await createWorld(stage, {
+  camera: [3.7, 1.75, 4.4], target: [0, 0.68, 0], fov: 40, background: 0x12161c,
+  groundSize: 40, shadowBox: 4, sun: [3.5, 7.5, 2.5], bloom: 0.12, exposure: 1.0
+});
+const { scene, controls } = R3;
+R3.ground.position.y = -2.4; // 床は机の下
+Object.assign(controls, { minDistance: 2.4, maxDistance: 10, maxPolarAngle: Math.PI * 0.46, enablePan: false });
 
-// 剛体こまのメッシュ（局所 y 軸が対称軸）
-const rigidGroup = new THREE.Group();
+// 机（ニス塗りのクルミ材）
 {
-  const mat = new THREE.MeshStandardMaterial({ color: 0x5cc8ff, metalness: 0.2, roughness: 0.45 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2a6f99, metalness: 0.2, roughness: 0.5 });
-  const disk = new THREE.Mesh(new THREE.CylinderGeometry(L.R, L.R, 0.12, 48), mat); disk.position.y = L.H; rigidGroup.add(disk);
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.35, L.H - 0.06, 32), dark); cone.rotation.x = Math.PI; cone.position.y = (L.H - 0.06) / 2; rigidGroup.add(cone);
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 16), dark); stem.position.y = L.H + 0.28; rigidGroup.add(stem);
-  // 回転が見えるように縞
-  for (let i = 0; i < 6; i++) {
-    const s = new THREE.Mesh(new THREE.BoxGeometry(L.R * 0.95, 0.125, 0.06), new THREE.MeshStandardMaterial({ color: i % 2 ? 0xff7a45 : 0xe6ebf1 }));
-    s.position.set(Math.cos(i / 6 * Math.PI) * 0, L.H, 0); s.rotation.y = i / 6 * Math.PI; s.position.x = 0; s.geometry.translate(L.R * 0.95 / 2, 0, 0);
-    rigidGroup.add(s);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(9, 0.3, 6), new THREE.MeshPhysicalMaterial({
+    map: tex.wood('#6a4227', '#3e2414', 31, [5, 3.5]), roughness: 0.7, clearcoat: 0.12, clearcoatRoughness: 0.6
+  }));
+  top.position.y = -0.15;
+  R3.add(top, { cast: false });
+  const legM = M.wood({ base: '#5a3820', dark: '#24140a', seed: 4 });
+  for (const [x, z] of [[-4.2, -2.7], [4.2, -2.7], [-4.2, 2.7], [4.2, 2.7]]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 2.1, 0.22), legM);
+    leg.position.set(x, -1.35, z); R3.add(leg);
   }
 }
-scene.add(rigidGroup);
 
-// 粒子こまの描画
+// ---------- 木のこま（ろくろで削った形を LatheGeometry で） ----------
+// 輪郭 [半径, 高さ]。支点（先端）が原点、局所 y 軸が対称軸
+const PROFILE = (() => {
+  const ctrl = [[0.045, 0.10], [0.10, 0.18], [0.22, 0.34], [0.38, 0.52], [0.56, 0.68], [0.74, 0.80], [0.86, 0.855], [0.905, 0.895],
+    [0.91, 0.935], [0.87, 0.968], [0.78, 0.986], [0.55, 1.0], [0.3, 1.014], [0.14, 1.03], [0.075, 1.06], [0.06, 1.14],
+    [0.055, 1.28], [0.074, 1.36], [0.07, 1.42], [0.03, 1.448], [0.0, 1.452]];
+  const c = new THREE.CatmullRomCurve3(ctrl.map(([r, y]) => new THREE.Vector3(r, y, 0)), false, 'centripetal');
+  return c.getSpacedPoints(110).map(p => new THREE.Vector2(Math.max(0, p.x), p.y));
+})();
+// 漆の色帯と、回転が見えるように天面の放射模様を木目の上に塗る
+const TOP_TEX = tex.label((g, w, h) => {
+  g.drawImage(tex.wood('#d2a46a', '#86542a', 5).image, 0, 0, w, h);
+  const N = PROFILE.length - 1;
+  const at = v => { const f = v * N, j = Math.min(N - 1, Math.floor(f)), t = f - j; return [PROFILE[j].x + (PROFILE[j + 1].x - PROFILE[j].x) * t, PROFILE[j].y + (PROFILE[j + 1].y - PROFILE[j].y) * t]; };
+  g.globalCompositeOperation = 'multiply';
+  for (let row = 0; row < h; row++) {
+    const [r, y] = at(1 - (row + 0.5) / h); // キャンバスの上が v=1
+    let col = null;
+    if (y < 0.85 && ((y > 0.30 && y < 0.312) || (y > 0.46 && y < 0.472))) col = '#2a1a12';
+    else if (y < 0.85 && y > 0.58 && y < 0.65) col = '#c8322a';
+    else if (y < 0.85 && y > 0.69 && y < 0.745) col = '#2f7a4a';
+    else if (r > 0.86 && y > 0.905 && y < 0.925) col = '#1c1410';
+    else if (y > 0.96 && r > 0.15 && r < 0.2) col = '#1c1410';
+    else if (y > 1.3 && y < 1.345) col = '#1c1410';
+    if (col) { g.fillStyle = col; g.fillRect(0, row, w, 1); }
+    if (y > 0.96 && y < 1.05 && r > 0.2 && r < 0.8) { // 天面：8 枚の扇形を赤・藍で交互に
+      for (let k = 0; k < 8; k += 2) { g.fillStyle = k % 4 ? '#2b3f8c' : '#c8322a'; g.fillRect(k / 8 * w, row, w / 8, 1); }
+    }
+  }
+  g.globalCompositeOperation = 'source-over';
+}, 1024, 1024);
+TOP_TEX.repeat.set(1, 1);
+const lacquerM = new THREE.MeshPhysicalMaterial({ map: TOP_TEX, roughness: 0.42, clearcoat: 0.6, clearcoatRoughness: 0.22 });
+const bodyGeo = new THREE.LatheGeometry(PROFILE, 72);
+const REST = bodyGeo.attributes.position.array.slice();
+const topGroup = new THREE.Group();
+const bodyMesh = new THREE.Mesh(bodyGeo, lacquerM);
+bodyMesh.frustumCulled = false;
+topGroup.add(bodyMesh);
+// 金属の心棒先端（鋼）と真鍮の口金
+const tipMesh = new THREE.Mesh(new THREE.LatheGeometry([[0, 0], [0.016, 0.01], [0.028, 0.035], [0.04, 0.08], [0.048, 0.104], [0.044, 0.118]].map(([r, y]) => new THREE.Vector2(r, y)), 32), M.steel({ roughness: 0.18 }));
+topGroup.add(tipMesh);
+const ferrule = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 10, 32), M.brass());
+ferrule.rotation.x = Math.PI / 2; ferrule.position.y = 0.11; topGroup.add(ferrule);
+// ちぎれた後に残る芯（外側の円盤を取り去った形）
+const coreMesh = new THREE.Mesh(new THREE.LatheGeometry(PROFILE.map(p => new THREE.Vector2(Math.min(p.x, 0.34), p.y)), 48), lacquerM);
+coreMesh.visible = false; topGroup.add(coreMesh);
+R3.add(topGroup);
+const rigidGroup = topGroup; // 剛体こまもやわらかいこまも同じ見た目（やわらかい方は頂点を動かす）
+
+// やわらかいこま：粒子の「ずれ」を近くの頂点へ配る重み（静止時の形で前計算）
+const NV = REST.length / 3, NW = 4, OUT0 = L.P.findIndex(q => q.role === 'out');
+const wI = new Uint8Array(NV * NW), wV = new Float32Array(NV * NW);
+for (let v = 0; v < NV; v++) {
+  const x = REST[v * 3], y = REST[v * 3 + 1], z = REST[v * 3 + 2];
+  const ds = L.P.map((q, i) => [i, Math.exp(-((x - q.p[0]) ** 2 + (y - q.p[1]) ** 2 + (z - q.p[2]) ** 2) / 0.08)]).sort((a, b) => b[1] - a[1]).slice(0, NW);
+  const sum = ds.reduce((s, d) => s + d[1], 0) || 1;
+  ds.forEach((d, k) => { wI[v * NW + k] = d[0]; wV[v * NW + k] = d[1] / sum; });
+}
+
+// 粒子こまのばね（中が見えるように、うっすら重ねて表示）
 const softGroup = new THREE.Group(); scene.add(softGroup);
-const partMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.05, 12, 8), new THREE.MeshStandardMaterial({ color: 0xff7a45, roughness: 0.4 }), L.P.length);
-softGroup.add(partMesh);
 const springGeo = new THREE.BufferGeometry();
 springGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(L.S.length * 6), 3));
 springGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(L.S.length * 6), 3));
-const springLines = new THREE.LineSegments(springGeo, new THREE.LineBasicMaterial({ vertexColors: true }));
+const springLines = new THREE.LineSegments(springGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.4, depthTest: false }));
+springLines.renderOrder = 10; springLines.frustumCulled = false;
 softGroup.add(springLines);
 
-// 軸先端の軌跡
+// 軸先端の軌跡（古いほど暗く消える光の筋）＋ 軸の延長線と鉛直の目安線
 const TRAIL = 600;
 const trailGeo = new THREE.BufferGeometry();
 trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
+trailGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
 trailGeo.setDrawRange(0, 0);
-const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffd166 }));
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+trail.frustumCulled = false;
 scene.add(trail);
+const tipGlow = new THREE.Mesh(new THREE.SphereGeometry(0.026, 16, 12), M.glow(0xffd166, 4));
+scene.add(tipGlow);
+const axisLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1.85, 0)]), new THREE.LineBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.4 }));
+scene.add(axisLine);
+const plumb = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1.85, 0)]), new THREE.LineDashedMaterial({ color: 0xc8d4e2, dashSize: 0.05, gapSize: 0.05, transparent: true, opacity: 0.35 }));
+plumb.computeLineDistances(); scene.add(plumb);
 let trailN = 0;
+const GOLD = new THREE.Color(0xffd166);
 function pushTrail(v) {
-  const a = trailGeo.attributes.position.array;
+  const a = trailGeo.attributes.position.array, c = trailGeo.attributes.color.array;
   if (trailN < TRAIL) trailN++; else a.copyWithin(0, 3);
   a.set([v.x, v.y, v.z], (trailN - 1) * 3);
+  for (let i = 0; i < trailN; i++) { const f = ((i + 1) / trailN) ** 1.6 * 0.9; c[i * 3] = GOLD.r * f; c[i * 3 + 1] = GOLD.g * f; c[i * 3 + 2] = GOLD.b * f; }
   trailGeo.attributes.position.needsUpdate = true;
+  trailGeo.attributes.color.needsUpdate = true;
   trailGeo.setDrawRange(0, trailN);
 }
+
+// ---------- 破片（ばねが切れた所から木片が飛ぶ。描画だけの簡単な放物運動） ----------
+const debris = [];
+const chipM = M.wood({ base: '#d2a46a', dark: '#86542a', seed: 9 });
+const chipGeo = new THREE.DodecahedronGeometry(0.035, 0);
+function addDebris(mesh, v, w, r) {
+  R3.add(mesh);
+  debris.push({ mesh, v, w, r });
+  while (debris.length > 90) { const d = debris.shift(); scene.remove(d.mesh); }
+}
+function spawnChip(p, v) {
+  const m = new THREE.Mesh(chipGeo, chipM);
+  m.position.copy(p); m.scale.set(1 + Math.random(), 0.5 + Math.random() * 0.5, 0.6 + Math.random());
+  addDebris(m, v, new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(25), 0.03);
+}
+// 円盤の外側を 8 つの扇形のかけらにする（ふちはギザギザに裂ける）
+function sectorGeo(a0, a1) {
+  const s = new THREE.Shape(), r0 = 0.34, r1 = 0.9, n = 6;
+  for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; s[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r1, Math.sin(a) * r1); }
+  for (let i = 1; i <= 4; i++) { const rr = r1 + (r0 - r1) * i / 4, a = a1 + (Math.random() - 0.5) * 0.12; s.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  for (let i = n; i >= 0; i--) { const a = a0 + (a1 - a0) * i / n, rr = r0 + (Math.random() - 0.5) * 0.05; s.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.1, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 1 });
+  g.rotateX(-Math.PI / 2); g.translate(0, 0.875, 0); // 局所座標で円盤の高さへ
+  return g;
+}
+let toppling = null;
+function shatter(s) {
+  bodyMesh.visible = false; coreMesh.visible = true; softGroup.visible = false;
+  topGroup.updateMatrixWorld();
+  const ax = axisOf(s).v, spinAx = ax.clone();
+  for (let k = 0; k < 8; k++) {
+    const a0 = k / 8 * 2 * Math.PI, a1 = (k + 1) / 8 * 2 * Math.PI;
+    const g = sectorGeo(a0, a1);
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, lacquerM);
+    // かけらの重心まわりで回転させるため、形を中心へ寄せてから位置を置く
+    const c = g.boundingSphere.center.clone(); g.translate(-c.x, -c.y, -c.z);
+    m.position.copy(c).applyMatrix4(topGroup.matrixWorld);
+    m.quaternion.copy(topGroup.quaternion);
+    const rel = m.position.clone();
+    const v = new THREE.Vector3().crossVectors(spinAx, rel).multiplyScalar(s.n * 0.35).add(rel.clone().setY(0).normalize().multiplyScalar(0.8));
+    v.y += 1.2;
+    addDebris(m, v, spinAx.clone().multiplyScalar(s.n * 0.5).add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).multiplyScalar(6)), 0.07);
+  }
+  for (let i = 0; i < 24; i++) {
+    const a = Math.random() * Math.PI * 2, p = new THREE.Vector3(Math.cos(a) * 0.8, 0.92, Math.sin(a) * 0.8).applyMatrix4(topGroup.matrixWorld);
+    spawnChip(p, new THREE.Vector3().crossVectors(spinAx, p).multiplyScalar(s.n * 0.3).add(new THREE.Vector3(0, 1 + Math.random() * 2, 0)));
+  }
+  // 外側を失った芯は、そのまま横へ倒れる
+  toppling = { h: new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), ax).normalize(), left: 1.05 - Math.acos(Math.min(1, ax.y)) };
+  RV.sfx.thud(1);
+}
+function clearDebris() {
+  debris.forEach(d => scene.remove(d.mesh)); debris.length = 0;
+  bodyMesh.visible = true; coreMesh.visible = false; toppling = null;
+}
+const _q = new THREE.Quaternion();
+R3.onFrame(dt => {
+  for (const d of debris) {
+    d.v.y -= G * dt;
+    d.mesh.position.addScaledVector(d.v, dt);
+    const len = d.w.length();
+    if (len > 1e-4) { _q.setFromAxisAngle(d.tmp || (d.tmp = new THREE.Vector3()).copy(d.w).divideScalar(len), len * dt); d.mesh.quaternion.premultiply(_q); }
+    const p = d.mesh.position, onTable = Math.abs(p.x) < 4.5 && Math.abs(p.z) < 3;
+    const floorY = (onTable ? 0 : -2.4) + d.r;
+    if (p.y < floorY && (onTable ? p.y > -0.3 : true)) {
+      p.y = floorY;
+      if (d.v.y < 0) d.v.y *= -0.25;
+      d.v.x *= 0.85; d.v.z *= 0.85; d.w.multiplyScalar(0.8);
+    }
+  }
+  if (toppling && toppling.left > 0) {
+    const da = Math.min(toppling.left, 2.2 * dt);
+    toppling.left -= da;
+    topGroup.quaternion.premultiply(_q.setFromAxisAngle(toppling.h, da));
+  }
+});
 
 // ---------- 状態 ----------
 let level = 0, sim = null, finished = false;
@@ -282,7 +415,7 @@ function axisOf(s) {
 function reset() {
   sim = null; finished = false; trailN = 0; trailGeo.setDrawRange(0, 0);
   const soft = LEVELS[level].kappa < 1;
-  rigidGroup.visible = !soft; softGroup.visible = soft;
+  softGroup.visible = soft; clearDebris();
   // 待機姿勢
   if (soft) { const s = makeSoft(+ui.spin.value, LEVELS[level].kappa); drawSoft(s); }
   else drawRigid({ y: [TH0, 0, 0, 0] });
@@ -296,7 +429,7 @@ function start() {
   const n = +ui.spin.value, kappa = LEVELS[level].kappa;
   sim = kappa < 1 ? makeSoft(n, kappa) : makeRigid(n);
   sim.t = 0; sim.unw = 0; sim.prevAz = null; sim.laps = 0; sim.lastWarn = 0;
-  finished = false; trailN = 0;
+  finished = false; trailN = 0; clearDebris();
   RV.$('#go').disabled = true;
   log.reset();
   log.add(`手がこまを回した（回す速さ ${n.toFixed(1)} rad/s）。こまに「回転の勢い」がついた`, [1], { t: 0 });
@@ -360,6 +493,7 @@ async function finish(kind) {
     log.add(`傾き ${(sim.tilt * 180 / Math.PI).toFixed(0)}° で円盤が床に触れた。回転の勢いが足りなかった`, [], { t: sim.t });
     RV.sfx.fail(); RV.toast(stage, '倒れた — 回す速さが足りない');
   } else if (kind === 'torn') {
+    shatter(sim);
     log.add(`ばね ${sim.broken} 本が切れた。こまは形を保てない`, [5], { t: sim.t });
     RV.sfx.fail(); RV.toast(stage, 'ちぎれた — 回しすぎ');
   } else {
@@ -392,21 +526,56 @@ async function finish(kind) {
 }
 
 // ---------- 描画 ----------
-const tmpM = new THREE.Matrix4(), qY = new THREE.Quaternion(), qZ = new THREE.Quaternion(), qS = new THREE.Quaternion();
+const qY = new THREE.Quaternion(), qZ = new THREE.Quaternion(), qS = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0), ZA = new THREE.Vector3(0, 0, 1);
 function drawRigid(s) {
   const [th, , ph, ps] = s.y;
   qY.setFromAxisAngle(UP, ph); qZ.setFromAxisAngle(ZA, -th); qS.setFromAxisAngle(UP, ps);
   rigidGroup.quaternion.copy(qY).multiply(qZ).multiply(qS);
+  rigidGroup.position.set(0, 0, 0);
+  if (bodyDeformed) { bodyGeo.attributes.position.array.set(REST); bodyGeo.attributes.position.needsUpdate = true; bodyGeo.computeVertexNormals(); bodyDeformed = false; }
 }
+// やわらかいこま：支点→中心の向きと外周の玉 1 個から「こま全体の向き」を求め、
+// 残りの「ずれ」（遠心力でのふくらみ）を頂点に配って形を変える
+const fX = new THREE.Vector3(), fY = new THREE.Vector3(), fZ = new THREE.Vector3(), fM = new THREE.Matrix4(), dP = new THREE.Vector3();
+const disp = L.P.map(() => new THREE.Vector3());
+let bodyDeformed = false;
 const cA = new THREE.Color(0x5cc8ff), cB = new THREE.Color(0xff5d73), cT = new THREE.Color();
 function drawSoft(s) {
-  s.bodies.forEach((b, i) => { tmpM.makeTranslation(b.position.x, b.position.y, b.position.z); partMesh.setMatrixAt(i, tmpM); });
-  partMesh.instanceMatrix.needsUpdate = true;
+  const t = s.bodies[0].position, c = s.bodies[2].position, o = s.bodies[OUT0].position;
+  fY.set(c.x - t.x, c.y - t.y, c.z - t.z).normalize();
+  fX.set(o.x - c.x, o.y - c.y, o.z - c.z); fX.addScaledVector(fY, -fX.dot(fY)).normalize();
+  fZ.crossVectors(fX, fY);
+  fM.makeBasis(fX, fY, fZ);
+  topGroup.quaternion.setFromRotationMatrix(fM);
+  topGroup.position.set(t.x, t.y, t.z);
+  s.bodies.forEach((b, i) => {
+    dP.set(b.position.x - t.x, b.position.y - t.y, b.position.z - t.z);
+    disp[i].set(dP.dot(fX) - L.P[i].p[0], dP.dot(fY) - L.P[i].p[1], dP.dot(fZ) - L.P[i].p[2]).clampLength(0, 0.45);
+  });
+  const pa = bodyGeo.attributes.position.array;
+  for (let v = 0; v < NV; v++) {
+    let x = REST[v * 3], y = REST[v * 3 + 1], z = REST[v * 3 + 2];
+    for (let k = 0; k < NW; k++) { const d = disp[wI[v * NW + k]], w = wV[v * NW + k]; x += d.x * w; y += d.y * w; z += d.z * w; }
+    pa[v * 3] = x; pa[v * 3 + 1] = y; pa[v * 3 + 2] = z;
+  }
+  bodyGeo.attributes.position.needsUpdate = true;
+  bodyGeo.computeVertexNormals();
+  bodyDeformed = true;
   const pos = springGeo.attributes.position.array, col = springGeo.attributes.color.array;
   s.springs.forEach((sp, i) => {
     const a = s.bodies[sp.a].position, b = s.bodies[sp.b].position;
-    if (sp.broken) { pos.fill(0, i * 6, i * 6 + 6); return; }
+    if (sp.broken) {
+      pos.fill(0, i * 6, i * 6 + 6);
+      if (!sp.fx) { // 切れた瞬間、その場所から木片が飛ぶ
+        sp.fx = true;
+        const ba = s.bodies[sp.a], bb = s.bodies[sp.b];
+        const p = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+        const v = new THREE.Vector3((ba.velocity.x + bb.velocity.x) / 2, (ba.velocity.y + bb.velocity.y) / 2 + 0.8, (ba.velocity.z + bb.velocity.z) / 2).multiplyScalar(0.5);
+        for (let k = 0; k < 3; k++) spawnChip(p, v.clone().add(new THREE.Vector3(Math.random() - 0.5, Math.random(), Math.random() - 0.5)));
+      }
+      return;
+    }
     pos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
     cT.copy(cA).lerp(cB, Math.min(1, Math.abs(sp.strain) / BREAK));
     col.set([cT.r, cT.g, cT.b, cT.r, cT.g, cT.b], i * 6);
@@ -415,13 +584,16 @@ function drawSoft(s) {
   springGeo.attributes.color.needsUpdate = true;
 }
 let trailTick = 0;
+const tipV = new THREE.Vector3();
 function render() {
+  if (sim && !toppling) { if (sim.kind === 'rigid') drawRigid(sim); else drawSoft(sim); }
+  const a = sim ? axisOf(sim) : { v: new THREE.Vector3(Math.sin(TH0), Math.cos(TH0), 0) };
+  tipV.copy(a.v).multiplyScalar(1.47);
+  tipGlow.position.copy(tipV);
+  axisLine.quaternion.setFromUnitVectors(UP, a.v);
+  axisLine.visible = tipGlow.visible = !toppling;
   if (sim) {
-    if (sim.kind === 'rigid') drawRigid(sim); else drawSoft(sim);
-    if (!finished && ++trailTick % 2 === 0) {
-      const a = axisOf(sim);
-      pushTrail(a.v.clone().multiplyScalar(1.45));
-    }
+    if (!finished && ++trailTick % 2 === 0) pushTrail(tipV);
     RV.$('#mT').textContent = sim.t.toFixed(2) + ' s';
     RV.$('#mTh').textContent = (sim.tilt * 180 / Math.PI).toFixed(1) + '°';
     const Tm = measuredT();
@@ -431,8 +603,6 @@ function render() {
       RV.$('#mB').textContent = `${sim.broken} / ${L.S.length}`;
     } else { RV.$('#mS').textContent = '0（剛体）'; RV.$('#mB').textContent = '—'; }
   }
-  controls.update();
-  renderer.render(scene, camera);
 }
 RV.loop(stepSim, render, 1 / 60);
 

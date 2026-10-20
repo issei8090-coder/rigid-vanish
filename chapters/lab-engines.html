@@ -12,17 +12,29 @@
 <script src="https://cdn.jsdelivr.net/npm/planck@1.0.0/dist/planck.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/oimo/1.0.9/oimo.min.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 <style>
   .eng-list { font-size: 12px; margin: 0; padding-left: 16px; }
   .eng-list li { margin: 3px 0; }
   .eng-list b { color: var(--fg); }
   .res { font-family: var(--mono); font-size: 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
   .res .ok { color: var(--good); } .res .ng { color: var(--bad); }
+  /* 6 分割の各区画に重ねるラベル */
+  .cells { position: absolute; inset: 0; display: grid; pointer-events: none; z-index: 3; }
+  .cell { border: 1px solid #263140; position: relative; }
+  .cell .hd { display: flex; justify-content: space-between; gap: 8px; padding: 6px 9px 14px;
+    background: linear-gradient(180deg, rgba(9,12,16,.82), rgba(9,12,16,.55) 70%, transparent); }
+  .cell .hd b { display: block; font-size: 13px; color: var(--fg); }
+  .cell .hd span { display: block; font-size: 11px; color: var(--muted); }
+  .cell .st { text-align: right; font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.35; }
+  .cell .st i { display: block; font-style: normal; }
+  .cell .st .h { font-size: 12px; font-weight: 700; } .cell .st .ok { color: var(--good); } .cell .st .ng { color: var(--bad); }
+  .cell .er { position: absolute; left: 10px; top: 52px; right: 10px; color: var(--bad); font-size: 12px; }
 </style>
 </head>
 <body>
 <main class="rv-main">
-  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <div class="rv-stage" id="stage"></div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション（実験室）</h2>
@@ -117,9 +129,10 @@
 </main>
 
 <script type="module">
+import { createWorld, THREE, M, tex, kappaColor, roundedBox } from '../shared/real3d.js';
 RV.header({ id: 'lab', chap: '実験室', title: 'エンジン総当たり', libs: ['Matter.js', 'Planck.js', 'p2.js', 'Rapier2D', 'toxiclibs.js', 'Oimo.js', 'Tone.js'] });
 if (window.Tone) RV.libOk('Tone.js');
-const stage = RV.$('#stage'), cv = RV.$('#cv'), ctx = cv.getContext('2d');
+const stage = RV.$('#stage');
 const log = RV.causal('#causal');
 
 // ---------- 共通シーン（SI 単位, y 上向き） ----------
@@ -472,6 +485,15 @@ function oimoEngine() {
       }
       return out;
     },
+    // 描画用：箱ごとの 8 角の立体座標（C8 の並び）、粒、球（斜投影しない本当の 3D）
+    bodies3D() {
+      const out = { boxes: [], parts: [], ball: ball ? [ball.pos.x, ball.pos.y, ball.pos.z] : null };
+      for (const b of boxes) {
+        if (!soft) { const p = b.pos, q = b.quaternion; out.boxes.push(C8.map(c => { const v = rot(q, c.map(k => k * HB)); return [p.x + v[0], p.y + v[1], p.z + v[2]]; })); }
+        else { const pts = b.map(s => [s.pos.x, s.pos.y, s.pos.z]); pts.forEach(p => out.parts.push([...p, PR])); out.boxes.push(expand(pts, HB / PO)); }
+      }
+      return out;
+    },
     dof() { return soft ? 3 * 8 * NB : 6 * NB; }
   };
 }
@@ -616,55 +638,217 @@ RV.$('#reset').onclick = () => resetAll();
 RV.$('#shoot').onclick = () => { if (trial) return; if (shot) resetAll(); shootAll(); };
 RV.$('#trial').onclick = () => { resetAll(); trial = { kappa }; RV.$('#results').innerHTML = `<span>κ=${kappa.toFixed(2)} 試験中…</span><span></span>`; };
 
-// ---------- 描画 ----------
-let W = 800, Hh = 500;
-const VIEW = { x0: -4.6, x1: 2.2, y0: -0.25, y1: 3.75 };
-RV.fitCanvas(cv, (w, h, dpr) => { W = w; Hh = h; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); });
-function render() {
-  ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, W, Hh);
-  const cols = W < 640 ? 2 : 3, rows = Math.ceil(engines.length / cols);
-  const pw = W / cols, ph = Hh / rows;
+// ---------- 描画（three.js のリアル3D：6 つの実験台を 1 つの WebGL で描き、画面を 6 分割して並べる） ----------
+// 6 台は同じ場所に重ねて置き、レイヤーで「どの台を見せるか」を切り替える（共通の台・方眼板・発射筒はレイヤー0）
+const DEPTH2 = 2 * HB;                    // 平面エンジンの箱の奥行き（立方体に見えるように）
+const VIEW_C = new THREE.Vector3(-1.55, 1.75, 0);   // 1 台ぶんの見どころの中心
+const D0 = 10;                           // 視点操作用カメラの基準距離
+const W3 = await createWorld(stage, {
+  camera: [VIEW_C.x + 2.6, VIEW_C.y + 2.8, D0 * 0.92], target: VIEW_C.toArray(), fov: 34, fog: false, bloom: 0,
+  groundSize: 40, shadowBox: 6, sun: [3.5, 9, 7], background: 0x0d1218
+});
+W3.ground.position.y = -0.7;
+const C = W3.controls;
+C.enablePan = false;
+C.minAzimuthAngle = -0.9; C.maxAzimuthAngle = 0.9;
+C.minPolarAngle = 0.7; C.maxPolarAngle = 1.52;
+C.minDistance = D0 * 0.55; C.maxDistance = D0 * 1.5;
+const vcam = new THREE.PerspectiveCamera(34, 1, 0.05, 200);
+const onLayer = (obj, L) => { obj.traverse(o => o.layers.set(L)); return obj; };
+
+// 共通：木の試験台（上面が物理の地面 y=0）＋ 鋼の脚 ＋ 方眼の測定板 ＋ 球の発射筒 ＋ 85% の目印
+const deskTop = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.16, 2.4), M.wood({ base: '#8f6236', dark: '#5a3818', seed: 3 }));
+deskTop.position.set(-1.2, -0.08, 0.1);
+const deskBase = new THREE.Mesh(new THREE.BoxGeometry(7.9, 0.54, 2.1), M.steel({ color: 0x59616b, roughness: 0.45 }));
+deskBase.position.set(-1.2, -0.43, 0.1);
+W3.add(deskTop); W3.add(deskBase);
+const boardTex = tex.label((g, w, h) => {
+  // 0.5m ごとの方眼（物理の座標そのまま：x -4.8〜2.4, y 0〜4.2）
+  g.fillStyle = '#bdb9ae'; g.fillRect(0, 0, w, h);
+  const sx = w / 7.2, sy = h / 4.2, X = x => (x + 4.8) * sx, Y = y => h - y * sy;
+  g.strokeStyle = 'rgba(60,80,110,.18)'; g.lineWidth = 1;
+  for (let x = -4.8; x <= 2.41; x += 0.1) { g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), h); g.stroke(); }
+  for (let y = 0; y <= 4.2; y += 0.1) { g.beginPath(); g.moveTo(0, Y(y)); g.lineTo(w, Y(y)); g.stroke(); }
+  g.strokeStyle = 'rgba(40,60,95,.45)'; g.lineWidth = 2;
+  for (let x = -4.5; x <= 2.41; x += 0.5) { g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), h); g.stroke(); }
+  g.fillStyle = 'rgba(30,45,70,.75)'; g.font = 'bold 26px sans-serif';
+  for (let y = 0.5; y <= 4.01; y += 0.5) { g.beginPath(); g.moveTo(0, Y(y)); g.lineTo(w, Y(y)); g.stroke(); g.fillText(y.toFixed(1) + ' m', X(0.75), Y(y) - 6); }
+  // 合格ライン：最初の高さの 85%
+  g.strokeStyle = '#d98a00'; g.lineWidth = 9; g.setLineDash([30, 14]);
+  g.beginPath(); g.moveTo(X(-1.9), Y(H0 * 0.85)); g.lineTo(X(1.9), Y(H0 * 0.85)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#8a4f00'; g.font = 'bold 40px sans-serif'; g.fillText('合格ライン 85%', X(-1.85), Y(H0 * 0.85) - 14);
+}, 1440, 840);
+const board = new THREE.Mesh(new THREE.BoxGeometry(7.2, 4.2, 0.06), [null, null, null, null, null, null].map((_, k) => k === 4 ? new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.8 }) : M.steel({ color: 0x8a939c })));
+board.position.set(-1.2, 2.1, -0.95);
+W3.add(board);
+// 85% の高さに光る細い棒（塔のすぐ後ろ）
+const bar85 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.04), M.glow(0xffb020, 2.2));
+bar85.position.set(0, H0 * 0.85, -0.45);
+W3.add(bar85, { cast: false });
+// 発射筒（球はここから右へ飛ぶ）
+const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.9, 32, 1, true), M.steel({ side: THREE.DoubleSide }));
+tube.rotation.z = Math.PI / 2; tube.position.set(BALL.x - 0.75, BALL.y, 0);
+const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, BALL.y - 0.3, 16), M.steel());
+stand.position.set(BALL.x - 0.8, (BALL.y - 0.3) / 2, 0);
+W3.add(tube); W3.add(stand);
+
+// 箱：角丸の立方体を「8 つの角の位置」から三重線形補間で変形させる（かたい箱も、ばねでゆがむ箱も同じしくみで描ける）
+const boxBase = await roundedBox(1, 1, 1, 0.07, 2);
+const WOOD_MATS = ['#b27a43', '#a06b38', '#c08a50', '#9c6331', '#b98448', '#a87240'].map((b, k) => M.wood({ base: b, dark: '#5d3a1a', seed: 11 + k }));
+const spongeTex = tex.roughNoise(31, [2, 2]);
+const SPONGE = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.92, sheen: 0.6, sheenRoughness: 0.8, bumpMap: spongeTex, bumpScale: 2.5 });
+function makeBlock() {
+  const geo = boxBase.clone();
+  geo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+  const m = new THREE.Mesh(geo, WOOD_MATS[0]);
+  m.castShadow = m.receiveShadow = true;
+  m.userData.base = Float32Array.from(boxBase.attributes.position.array);
+  m.frustumCulled = false;
+  return m;
+}
+// c8: 8 角の座標 [x,y,z]（並び：x 外側, y, z 内側 ＝ Oimo の C8 と同じ）
+function deform(m, c8) {
+  const b = m.userData.base, p = m.geometry.attributes.position.array;
+  for (let i = 0; i < b.length; i += 3) {
+    const u = b[i] + 0.5, v = b[i + 1] + 0.5, w = b[i + 2] + 0.5;
+    let x = 0, y = 0, z = 0;
+    for (let k = 0; k < 8; k++) {
+      const wt = (k & 4 ? u : 1 - u) * (k & 2 ? v : 1 - v) * (k & 1 ? w : 1 - w), c = c8[k];
+      x += wt * c[0]; y += wt * c[1]; z += wt * c[2];
+    }
+    p[i] = x; p[i + 1] = y; p[i + 2] = z;
+  }
+  m.geometry.attributes.position.needsUpdate = true;
+  m.geometry.computeVertexNormals();
+  m.geometry.computeBoundingSphere();
+}
+// 平面の 4 角（CORNERS の並び・反時計回り）→ 奥行きを付けた 8 角
+const IDX2 = { '-1,-1': 0, '1,-1': 1, '1,1': 2, '-1,1': 3 };
+const C8 = []; for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) C8.push([x, y, z]);
+function corners2D(poly) {
+  let a = 0;
+  for (let k = 0; k < poly.length; k++) { const p = poly[k], q = poly[(k + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; }
+  const P = a < 0 ? poly.slice().reverse() : poly;    // 時計回り（Matter.js の頂点順）は向きをそろえる
+  return C8.map(([x, y, z]) => { const c = P[IDX2[x + ',' + y]]; return [c[0], c[1], z * DEPTH2 / 2]; });
+}
+
+// エンジン名の真鍮の銘板
+function plaque(e) {
+  const t = tex.label((g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, w, h);
+    gr.addColorStop(0, '#e8c46a'); gr.addColorStop(0.5, '#b8862f'); gr.addColorStop(1, '#e2b75a');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(70,45,10,.7)'; g.lineWidth = 8; g.strokeRect(12, 12, w - 24, h - 24);
+    g.fillStyle = '#3a2508'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 74px sans-serif'; g.fillText(e.name, w / 2, h * 0.4);
+    g.font = '40px sans-serif'; g.fillText(e.solver, w / 2, h * 0.74);
+  }, 640, 220);
+  const grp = new THREE.Group();
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.68, 0.03), [0, 0, 0, 0, 1, 0].map(k => k ? new THREE.MeshStandardMaterial({ map: t, metalness: 0.75, roughness: 0.32 }) : M.brass()));
+  plate.position.y = 0.4; plate.rotation.x = -0.3;
+  const foot = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.1, 0.4), M.wood({ base: '#5a3a1e', dark: '#2e1c0c', seed: 9 }));
+  foot.position.y = 0.05;
+  grp.add(plate, foot);
+  grp.position.set(-2.4, 0, 0.75);
+  return grp;
+}
+
+// 台ごとの物（箱・球・粒・銘板）
+const BALL_MAT = M.chrome({ color: 0xd8dde3 });
+const DOT_MAT = new THREE.MeshPhysicalMaterial({ color: 0xffd9bf, roughness: 0.3, clearcoat: 0.8, emissive: 0x401c08 });
+const stations = engines.map((e, i) => {
+  const L = i + 1, g = new THREE.Group();
+  const blocks = []; for (let k = 0; k < NB; k++) { const m = makeBlock(); g.add(m); blocks.push(m); }
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL.r, 40, 24), BALL_MAT); ball.castShadow = true; ball.visible = false; g.add(ball);
+  const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 12, 8), DOT_MAT, 64); dots.count = 0; dots.castShadow = true; g.add(dots);
+  g.add(W3.shadow(plaque(e)));
+  W3.scene.add(onLayer(g, L));
+  return { L, blocks, ball, dots };
+});
+
+// 画面の 6 分割に合わせた HTML のラベル（エンジン名・高さ・動き方の数・ms/step）
+const cellsEl = document.createElement('div');
+cellsEl.className = 'cells';
+stage.appendChild(cellsEl);
+const cellUI = engines.map(e => {
+  const d = document.createElement('div');
+  d.className = 'cell';
+  d.innerHTML = `<div class="hd"><div><b>${e.name}</b><span>${e.solver}</span></div><div class="st"><i class="h"></i><i class="d"></i><i class="ms"></i></div></div><div class="er"></div>`;
+  cellsEl.appendChild(d);
+  return { h: d.querySelector('.h'), d: d.querySelector('.d'), ms: d.querySelector('.ms'), er: d.querySelector('.er') };
+});
+let cols = 3, rows = 2;
+function layout() {
+  const r = stage.getBoundingClientRect();
+  cols = r.width < 640 ? 2 : 3; rows = Math.ceil(engines.length / cols);
+  cellsEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  cellsEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+}
+new ResizeObserver(layout).observe(stage);
+layout();
+
+// 1 つのレンダラーで 6 つの区画を順に描く（ポストエフェクトの代わりにこれを使う）
+const _sz = new THREE.Vector2(), _off = new THREE.Vector3();
+W3.composer.render = function () {
+  const R = W3.renderer;
+  R.getSize(_sz);
+  const pw = _sz.x / cols, ph = _sz.y / rows;
+  // 区画の縦横比に合わせて、台全体（横 7.4m・高さ 4.6m）が入る距離へ
+  const asp = pw / ph, vf = 17 * Math.PI / 180, hf = Math.atan(Math.tan(vf) * asp);
+  const fitD = Math.max(3.3 / Math.tan(hf), 2.25 / Math.tan(vf)) + 0.6;
+  _off.copy(W3.camera.position).sub(C.target).multiplyScalar(fitD / D0);
+  vcam.position.copy(VIEW_C).add(_off);
+  vcam.quaternion.copy(W3.camera.quaternion);
+  vcam.aspect = asp; vcam.updateProjectionMatrix();
+  R.setScissorTest(true);
   engines.forEach((e, i) => {
-    const ox = (i % cols) * pw, oy = Math.floor(i / cols) * ph;
-    const s = Math.min((pw - 16) / (VIEW.x1 - VIEW.x0), (ph - 52) / (VIEW.y1 - VIEW.y0));
-    const X = x => ox + 8 + (x - VIEW.x0) * s, Y = y => oy + ph - 8 - (y - VIEW.y0) * s;
-    ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 1, oy + 1, pw - 2, ph - 2); ctx.clip();
-    ctx.fillStyle = '#10151b'; ctx.fillRect(ox + 1, oy + 1, pw - 2, ph - 2);
-    // 地面
-    ctx.fillStyle = '#39424e'; ctx.fillRect(ox, Y(0), pw, Hh);
-    // 初期高さの 85% ライン
-    ctx.strokeStyle = 'rgba(255,209,102,.35)'; ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(X(-1.2), Y(H0 * 0.85)); ctx.lineTo(X(1.2), Y(H0 * 0.85)); ctx.stroke(); ctx.setLineDash([]);
+    const x = (i % cols) * pw, y = _sz.y - (Math.floor(i / cols) + 1) * ph;
+    R.setViewport(x + 1, y + 1, pw - 2, ph - 2);
+    R.setScissor(x + 1, y + 1, pw - 2, ph - 2);
+    vcam.layers.set(0); vcam.layers.enable(stations[i].L);
+    R.render(W3.scene, vcam);
+  });
+  R.setScissorTest(false);
+};
+
+const _m = new THREE.Matrix4();
+function render() {
+  engines.forEach((e, i) => {
+    const S = stations[i], ui = cellUI[i];
     let h = 0;
     if (stats[i].err) {
-      ctx.fillStyle = '#ff5d73'; ctx.font = '12px sans-serif'; ctx.fillText('エラー: ' + stats[i].err.slice(0, 60), ox + 10, oy + 44);
+      ui.er.textContent = 'エラー: ' + stats[i].err.slice(0, 60);
+      S.blocks.forEach(m => m.visible = false); S.ball.visible = false; S.dots.count = 0;
     } else {
+      ui.er.textContent = '';
       const sh = e.shapes();
       h = heightOf(sh);
-      const soft = kappa < 1 || e.lib === 'toxiclibs.js';
-      sh.polys.forEach((poly, k) => {
-        ctx.beginPath(); poly.forEach(([x, y], j) => j ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); ctx.closePath();
-        ctx.fillStyle = kappa >= 1 ? `hsla(${200 + k * 4},70%,${45 + k * 3}%,.85)` : `hsla(${20 + k * 5},80%,${50 + k * 2}%,.55)`;
-        ctx.fill();
-        ctx.strokeStyle = kappa >= 1 ? '#a8e3ff' : '#ffb38a'; ctx.lineWidth = 1; ctx.stroke();
+      const soft = kappa < 1;
+      // 3D（Oimo.js）は本当の立体の角を、平面エンジンは 4 角に奥行きを付けて
+      const b3 = e.bodies3D ? e.bodies3D() : null;
+      S.blocks.forEach((m, k) => {
+        const c8 = b3 ? b3.boxes[k] : sh.polys[k] && corners2D(sh.polys[k]);
+        if (!c8) { m.visible = false; return; }
+        m.visible = true;
+        m.material = soft ? SPONGE : WOOD_MATS[k];
+        deform(m, c8);
       });
-      if (soft) { ctx.fillStyle = '#ffe2cf'; for (const [x, y] of sh.parts) { ctx.beginPath(); ctx.arc(X(x), Y(y), 2.2, 0, 7); ctx.fill(); } }
-      if (sh.ball) { ctx.fillStyle = '#ffd166'; ctx.beginPath(); ctx.arc(X(sh.ball[0]), Y(sh.ball[1]), sh.ball[2] * s, 0, 7); ctx.fill(); }
+      if (soft) kappaColor(kappa, SPONGE.color);
+      // 粒（κ<1、または粒だけの toxiclibs.js）
+      const parts = b3 ? b3.parts : sh.parts.map(([x, y, r]) => [x, y, 0, r]);
+      const showParts = soft || e.lib === 'toxiclibs.js';
+      let n = 0;
+      if (showParts) for (const [x, y, z, r] of parts) { if (n >= 64) break; S.dots.setMatrixAt(n++, _m.makeScale(0.045, 0.045, 0.045).setPosition(x, y, z + (b3 ? 0 : DEPTH2 / 2 + 0.01))); }
+      S.dots.count = n; S.dots.instanceMatrix.needsUpdate = true;
+      const bl = b3 ? b3.ball : sh.ball && [sh.ball[0], sh.ball[1], 0];
+      S.ball.visible = !!bl;
+      if (bl) S.ball.position.set(bl[0], bl[1], bl[2]);
     }
-    // ラベル
-    ctx.fillStyle = '#e6ebf1'; ctx.font = 'bold 13px sans-serif'; ctx.fillText(e.name, ox + 10, oy + 18);
-    ctx.fillStyle = '#8d9aab'; ctx.font = '11px sans-serif'; ctx.fillText(e.solver, ox + 10, oy + 33);
-    ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'right';
     const dof = e.dof();
-    ctx.fillStyle = h >= 0.85 ? '#6fdc8c' : '#ff5d73';
-    ctx.fillText(`高さ ${(h * 100).toFixed(0)}%`, ox + pw - 10, oy + 18);
-    ctx.fillStyle = '#8d9aab';
-    ctx.fillText(`動き方の数 ${dof}${e.dofNote ? '（' + e.dofNote + '）' : ''}`, ox + pw - 10, oy + 32);
-    ctx.fillText(`${stats[i].ms.toFixed(2)} ms/step`, ox + pw - 10, oy + 46);
-    ctx.textAlign = 'left';
-    ctx.restore();
-    ctx.strokeStyle = '#2b3542'; ctx.strokeRect(ox + 0.5, oy + 0.5, pw - 1, ph - 1);
+    ui.h.textContent = `高さ ${(h * 100).toFixed(0)}%`;
+    ui.h.className = 'h ' + (h >= 0.85 ? 'ok' : 'ng');
+    ui.d.textContent = `動き方の数 ${dof}${e.dofNote ? '（' + e.dofNote + '）' : ''}`;
+    ui.ms.textContent = `${stats[i].ms.toFixed(2)} ms/step`;
   });
   RV.$('#mT').textContent = simT.toFixed(2) + ' s' + (trial ? ' 試験中' : '');
 }

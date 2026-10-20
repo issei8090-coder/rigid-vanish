@@ -170,7 +170,7 @@
   document.getElementById('total').textContent = `★ ${total} / ${CHAPTERS.length * 3}`;
   document.getElementById('prog').style.width = (total / (CHAPTERS.length * 3) * 100) + '%';
   document.getElementById('libs-all').textContent =
-    'Matter.js 0.19 / Planck.js 1.0 / p2.js 0.7.1 / Rapier2D 0.14 (WASM) / cannon-es 0.20 / Ammo.js (Bullet, WASM) / Oimo.js 1.0.9 / LiquidFun (WASM) / toxiclibs.js 0.3.3 / three.js 0.160 / d3 7.9 / Chart.js 4.4 / Tone.js 14.7 / odex 3.0 / gpu.js 2.16 / Zdog 1.1.3 / GSAP 3.12';
+    'Matter.js 0.19 / Planck.js 1.0 / p2.js 0.7.1 / Rapier2D 0.14 (WASM) / cannon-es 0.20 / Ammo.js (Bullet, WASM) / Oimo.js 1.0.9 / LiquidFun (WASM) / toxiclibs.js 0.3.3 / three.js 0.160 / d3 7.9 / Chart.js 4.4 / Tone.js 14.7 / odex 3.0 / gpu.js 2.16 / GSAP 3.12';
 
   // ---------- d3-force による「剛体の定義」 ----------
   // 教科書 図3-4: △PQR を決めれば 4 番目以降の点は一意に決まり、自由度は増えない。
@@ -198,9 +198,9 @@
     .attr('stroke-linecap', 'round');
   const nodeSel = g.selectAll('g.n').data(nodes).join('g').attr('class', 'n').style('cursor', 'grab');
   nodeSel.append('circle').attr('r', d => d.id === 'P' || d.id === 'Q' || d.id === 'R' ? 11 : 8)
-    .attr('fill', '#1b222b').attr('stroke-width', 2);
+    .attr('fill', 'rgba(0,0,0,0.001)').attr('stroke-width', 0);
   nodeSel.append('text').text(d => d.id).attr('text-anchor', 'middle').attr('dy', '0.35em')
-    .attr('font-size', 11).attr('fill', '#e6ebf1').attr('font-family', 'Consolas, monospace').style('pointer-events', 'none');
+    .attr('font-size', 12).attr('font-weight', 700).attr('fill', '#0b0e12').attr('font-family', 'Consolas, monospace').style('pointer-events', 'none');
 
   let kappa = 1;
   const linkForce = d3.forceLink(links).id(d => d.id).distance(d => d.d0);
@@ -245,10 +245,11 @@
       d3.select(this)
         .attr('x1', d.source.x).attr('y1', d.source.y).attr('x2', d.target.x).attr('y2', d.target.y)
         .attr('stroke', color(Math.max(0, 1 - e * 8)))
-        .attr('stroke-opacity', d.tri ? 0.95 : 0.35 + 0.4 * kappa);
+        .attr('stroke-opacity', 0);
     });
     nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
     nodeSel.select('circle').attr('stroke', color(kappa));
+    window.__hub.center = [cx, cy];
     const mean = devSum / links.length;
     const rigid = devMax < 0.02;
     document.getElementById('dev').textContent = (mean * 100).toFixed(1) + '%';
@@ -258,6 +259,10 @@
     st.textContent = rigid ? 'かたい物' : devMax < 0.15 ? 'ゴムっぽい' : 'バラバラ';
     st.style.color = rigid ? 'var(--rigid)' : 'var(--accent)';
   });
+
+  // 3D 描画（下の module）にシミュレーションの状態を渡す
+  window.__hub = { nodes, links, get kappa() { return kappa; }, center: [W() * 0.5, H() * 0.52], svg: svg.node() };
+  window.dispatchEvent(new Event('hub-ready'));
 
   // 初期配置
   nodes.forEach(n => { n.x = n.x0; n.y = n.y0; });
@@ -280,6 +285,66 @@
     })(t0);
   }
 })();
+</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+// ハブの「剛体の定義」をリアルな 3D で描く。動きは上の d3-force、つかむ操作は透明な SVG が担当し、
+// 3D の球と棒は SVG の画面位置にぴったり重なるように、奥の垂直な面へ投影して置く。
+import { createWorld, M, THREE } from './shared/real3d.js';
+const hub = window.__hub;
+const left = document.querySelector('.hub-left');
+const host = document.createElement('div');
+host.style.cssText = 'position:absolute;inset:0;z-index:0';
+left.prepend(host);
+document.getElementById('graph').style.position = 'relative';
+document.getElementById('graph').style.zIndex = 1;
+const W3 = await createWorld(host, {
+  controls: false, camera: [1.6, 4.4, 9.5], target: [0, 3.0, 0], groundSize: 50, bloom: 0.45,
+  background: 0x0e141b, shadowBox: 7, sun: [4, 11, 6]
+});
+const { THREE: T, scene, camera, renderer } = W3;
+const PLANE = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), hit = new THREE.Vector3();
+// SVG 上の座標（ピクセル）→ 3D の面上の点
+function toWorld(px, py, out) {
+  const r = renderer.domElement.getBoundingClientRect(), sr = hub.svg.getBoundingClientRect();
+  ndc.set(((sr.left + px - r.left) / r.width) * 2 - 1, -((sr.top + py - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  return ray.ray.intersectPlane(PLANE, out) || out;
+}
+const big = id => id === 'P' || id === 'Q' || id === 'R';
+const sphereGeo = new THREE.SphereGeometry(1, 40, 28);
+const nodeMats = hub.nodes.map(() => new THREE.MeshPhysicalMaterial({ color: 0xdfe6ee, metalness: 1, roughness: 0.12, clearcoat: 0.6 }));
+const spheres = hub.nodes.map((n, i) => W3.add(new THREE.Mesh(sphereGeo, nodeMats[i])));
+const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 20);
+const rods = hub.links.map(l => W3.add(new THREE.Mesh(rodGeo, new THREE.MeshPhysicalMaterial({ color: 0xb9c3cf, metalness: 1, roughness: 0.28 }))));
+W3.bloom.threshold = 1.0;   // 金属の照り返しはにじませない
+const C_RIGID = new THREE.Color(0xdfe6ee), C_SOFT = new THREE.Color(0xff7a45), C_ROD = new THREE.Color(0xb9c3cf), C_BAD = new THREE.Color(0xff5d73);
+const up = new THREE.Vector3(0, 1, 0), a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3();
+W3.onFrame(() => {
+  const [cx, cy] = hub.center, k = hub.kappa;
+  // 1px が 3D で何メートルか（球の大きさを SVG の当たり判定にそろえる）
+  const p0 = toWorld(cx, cy, new THREE.Vector3()), p1 = toWorld(cx + 10, cy, new THREE.Vector3());
+  const wpp = p0.distanceTo(p1) / 10;
+  hub.nodes.forEach((n, i) => {
+    toWorld(cx + n.x, cy + n.y, spheres[i].position);
+    spheres[i].scale.setScalar((big(n.id) ? 13 : 10) * wpp);
+    nodeMats[i].color.copy(C_SOFT).lerp(C_RIGID, k);
+    nodeMats[i].metalness = 0.15 + 0.85 * k; nodeMats[i].roughness = 0.12 + 0.3 * (1 - k);
+  });
+  hub.links.forEach((l, i) => {
+    a.copy(spheres[hub.nodes.indexOf(l.source)].position); b.copy(spheres[hub.nodes.indexOf(l.target)].position);
+    d.subVectors(b, a); const len = d.length();
+    const e = Math.abs(Math.hypot(l.source.x - l.target.x, l.source.y - l.target.y) - l.d0) / l.d0;
+    const m = rods[i];
+    m.position.addVectors(a, b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(up, d.normalize());
+    const r = (l.tri ? 3.2 : 1.6) * wpp;
+    m.scale.set(r, len, r);
+    m.material.color.copy(C_ROD).lerp(C_BAD, Math.min(1, e * 8));
+    m.material.metalness = 0.2 + 0.8 * k;
+  });
+});
 </script>
 </body>
 </html>

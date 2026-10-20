@@ -24,13 +24,29 @@
   #basis { font-size: 13px; min-height: 2.6em; }
   .pushpad { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .pushpad .btn { padding: 12px 0; font-weight: 700; user-select: none; touch-action: none; }
+  #forceHud { position: absolute; left: 14px; bottom: 14px; z-index: 5; width: 230px; padding: 10px 14px 12px; border-radius: 12px; background: rgba(13,17,22,.8); border: 1px solid var(--line); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); box-shadow: 0 6px 20px rgba(0,0,0,.4); pointer-events: none; font-family: var(--mono); }
+  #forceHud .k { font-size: 11px; color: var(--muted); }
+  #forceHud .v { font-size: 44px; font-weight: 700; line-height: 1.05; color: #e8eef5; transition: color .15s; }
+  #forceHud .v small { font-size: 18px; margin-left: 6px; color: var(--muted); }
+  #forceHud.in .v { color: var(--good); }
+  #forceHud.over .v { color: var(--bad); }
+  #forceHud .gauge { position: relative; height: 10px; margin-top: 6px; border-radius: 5px; background: #252e39; }
+  #forceHud .gauge .band { position: absolute; top: 0; bottom: 0; background: rgba(111,220,140,.55); border-radius: 2px; }
+  #forceHud .gauge .needle { position: absolute; top: -4px; width: 3px; height: 18px; margin-left: -1px; background: #ff7a45; border-radius: 2px; box-shadow: 0 0 6px rgba(255,122,69,.8); }
+  #forceHud .scale { position: relative; height: 12px; font-size: 10px; color: var(--muted); margin-top: 3px; }
+  #forceHud .scale span { position: absolute; transform: translateX(-50%); }
+  #forceHud .scale span:first-child { transform: none; }
+  #forceHud .hold { margin-top: 6px; }
   #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-family: var(--mono); }
 </style>
 </head>
 <body>
 <main class="rv-main">
   <div class="rv-stage" id="stage">
-    <canvas id="cv"></canvas>
+    <div id="forceHud"><div class="k">押せた力（押し返された力）</div><div class="v"><b id="hudF">0</b><small>N</small></div>
+      <div class="gauge"><i class="band" id="hudBand"></i><i class="needle" id="hudNeedle"></i></div>
+      <div class="scale"><span style="left:0">0</span><span style="left:45.5%">100</span><span style="left:63.6%">140</span><span style="left:90.9%">200</span></div>
+      <div class="hold"><i id="hudHold"></i></div></div>
     <div id="loading">Ammo.js（Bullet 物理エンジン）を読み込み中…</div>
   </div>
   <aside class="rv-side">
@@ -103,7 +119,7 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createWorld, M, tex, roundedBox } from '../shared/real3d.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 RV.header({ id: 'c6', chap: '第6章', title: '豆腐を100Nで押せ', libs: ['three.js', 'Ammo.js', 'Tone.js'] });
@@ -132,53 +148,187 @@ try {
 } catch (e) { RV.libOk('Ammo.js', false); RV.$('#loading').textContent = 'Ammo.js の読み込みに失敗しました'; throw e; }
 RV.$('#loading').remove();
 
-// ---------- three.js ----------
-const canvas = RV.$('#cv');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0d10);
-const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 50);
-camera.position.set(0.15, 1.9, 2.9);
-const controls = new OrbitControls(camera, canvas);
-controls.target.set(0.45, 0.3, 0);
-controls.enableDamping = true;
-RV.fitCanvas(canvas, (w, h, dpr) => { renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); });
-scene.add(new THREE.HemisphereLight(0xdde8ff, 0x1a1e24, 1.0));
-const sun = new THREE.DirectionalLight(0xffffff, 1.7); sun.position.set(-2, 4, 3); scene.add(sun);
+// ---------- three.js（共通のリアル3Dキット：HDRI の映り込み・やわらかい影） ----------
+const R3 = await createWorld(stage, {
+  camera: [-0.8, 1.55, 3.5], target: [-0.5, 0.42, 0], fov: 40, background: 0x1a1e24,
+  ground: false, shadowBox: 2.4, sun: [-1.6, 4.2, 2.6], bloom: 0.08, exposure: 1.0, fog: false
+});
+const { scene, controls } = R3;
+Object.assign(controls, { minDistance: 1.3, maxDistance: 5, maxPolarAngle: Math.PI * 0.47, minAzimuthAngle: -1.2, maxAzimuthAngle: 0.85, enablePan: false });
 
-const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(5, 0.1, 3), new THREE.MeshStandardMaterial({ color: 0x1a2029, roughness: 0.95 }));
-floorMesh.position.y = -0.05; scene.add(floorMesh);
-const gridH = new THREE.GridHelper(5, 25, 0x2b3542, 0x1e252e); gridH.position.y = 0.001; scene.add(gridH);
-const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.6, 1.8), new THREE.MeshStandardMaterial({ color: 0x5b6573, roughness: 0.9 }));
-wallMesh.position.set(WALL_X + 0.1, 0.8, 0); scene.add(wallMesh);
-const pushMesh = new THREE.Group();
+// 床：フローリング（板の継ぎ目入り）
 {
-  const rod = new THREE.Mesh(new THREE.BoxGeometry(PHX * 2, PHY * 2, PHZ * 2), new THREE.MeshStandardMaterial({ color: 0x5cc8ff, metalness: 0.3, roughness: 0.35, transparent: true, opacity: 0.55, depthWrite: false }));
-  pushMesh.add(rod);
-  const face = new THREE.Mesh(new THREE.BoxGeometry(0.02, PHY * 2 + 0.01, PHZ * 2 + 0.01), new THREE.MeshStandardMaterial({ color: 0xffd166 }));
-  face.position.x = PHX; pushMesh.add(face);
+  const ft = tex.label((g, w, h) => {
+    g.drawImage(tex.wood('#8a6446', '#55381f', 17).image, 0, 0, w, h);
+    g.fillStyle = 'rgba(28,14,6,.6)';
+    for (let i = 0; i < 4; i++) { g.fillRect(0, i * h / 4, w, 3); g.fillRect(((i * 0.37 + 0.2) % 1) * w, i * h / 4, 3, h / 4); }
+  });
+  ft.repeat.set(4, 6);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(8, 6), new THREE.MeshPhysicalMaterial({ map: ft, roughness: 0.6, clearcoat: 0.25, clearcoatRoughness: 0.4 }));
+  floor.rotation.x = -Math.PI / 2;
+  R3.add(floor, { cast: false });
 }
-scene.add(pushMesh);
-// 手の目標位置マーカー
-const handMark = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.12, 12), new THREE.MeshStandardMaterial({ color: 0xff7a45 }));
+// 打ちっぱなしのコンクリート壁（型枠の継ぎ目とセパ穴）。見た目は物理の壁より大きく、面の位置は同じ
+{
+  const wt = tex.label((g, w, h) => {
+    g.drawImage(tex.concrete(11, [1, 1]).image, 0, 0, w, h);
+    g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, 0, w, h);
+    for (const [fx, fy] of [[0.18, 0.22], [0.82, 0.22], [0.18, 0.78], [0.82, 0.78]]) {
+      const gr = g.createRadialGradient(fx * w, fy * h, 1, fx * w, fy * h, 9);
+      gr.addColorStop(0, 'rgba(30,32,36,.75)'); gr.addColorStop(0.6, 'rgba(50,54,60,.45)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(fx * w, fy * h, 9, 0, Math.PI * 2); g.fill();
+    }
+  });
+  wt.repeat.set(2, 3);
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.6, 3.6), new THREE.MeshStandardMaterial({ map: wt, roughness: 0.93, bumpMap: tex.roughNoise(13, [6, 6]), bumpScale: 0.5 }));
+  wall.position.set(WALL_X + 0.1, 1.3, 0);
+  R3.add(wall);
+}
+
+// 奥の壁（しっくい）で部屋の角にする（物理には関係しない背景）
+{
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(6, 2.6), new THREE.MeshStandardMaterial({ color: 0x8a847a, roughness: 0.95, bumpMap: tex.roughNoise(17, [8, 4]), bumpScale: 0.3 }));
+  back.position.set(WALL_X - 3, 1.3, -1.75);
+  R3.add(back, { cast: false });
+  const skirting = new THREE.Mesh(new THREE.BoxGeometry(6, 0.08, 0.02), M.wood({ base: '#5a3a22', dark: '#2e1b0e', seed: 2 }));
+  skirting.position.set(WALL_X - 3, 0.04, -1.74);
+  R3.add(skirting);
+}
+
+// ---------- 押し棒（最後の剛体）：ゴムの押し板＋フォースゲージ＋軍手の手 ----------
+const pushMesh = new THREE.Group();
+let gaugeTex, gaugeCtx, gaugeShown = '';
+{
+  const pad = new THREE.Mesh(await roundedBox(0.04, PHY * 2, PHZ * 2, 0.015), M.rubber(0x1d1f23));
+  pad.position.x = PHX - 0.02; pushMesh.add(pad);
+  const plate = new THREE.Mesh(await roundedBox(0.03, PHY * 2 - 0.04, PHZ * 2 - 0.04, 0.01), M.steel({ color: 0xb9c0c8, roughness: 0.32 }));
+  plate.position.x = PHX - 0.055; pushMesh.add(plate);
+  // 押し板の前面のふち（当たる面がわかるように黄色い線）
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(0.006, PHY * 2 + 0.004, PHZ * 2 + 0.004), M.glow(0xffd166, 0.6));
+  edge.position.x = PHX - 0.001; edge.scale.set(1, 1, 1); pushMesh.add(edge);
+  edge.material.transparent = true; edge.material.opacity = 0.35;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.3, 20), M.chrome());
+  shaft.rotation.z = Math.PI / 2; shaft.position.x = PHX - 0.22; pushMesh.add(shaft);
+  // フォースゲージ本体（黄色い樹脂ケース）
+  const body = new THREE.Mesh(await roundedBox(0.34, 0.15, 0.11, 0.03), M.plastic(0xf2b632, { roughness: 0.4 }));
+  body.position.x = -0.2; pushMesh.add(body);
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
+  gaugeCtx = cv.getContext('2d');
+  gaugeTex = new THREE.CanvasTexture(cv); gaugeTex.colorSpace = THREE.SRGBColorSpace;
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.09), new THREE.MeshBasicMaterial({ map: gaugeTex, toneMapped: false }));
+  screen.position.set(-0.2, 0, 0.0555); pushMesh.add(screen);
+  // 握り（縦の取っ手）
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.12, 16), M.chrome());
+  neck.rotation.z = Math.PI / 2; neck.position.x = -0.42; pushMesh.add(neck);
+  const grip = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.07, 6, 16), M.rubber(0x2a2d33));
+  grip.position.x = -0.49; pushMesh.add(grip);
+  // 軍手の手（握りこぶし）と腕
+  const glove = M.cloth(0xe8e4d8, { sheenColor: new THREE.Color(0xffffff), color: 0xe8e4d8 });
+  const palm = new THREE.Mesh(await roundedBox(0.11, 0.13, 0.1, 0.04), glove);
+  palm.position.set(-0.545, 0, 0); pushMesh.add(palm);
+  for (let i = 0; i < 4; i++) {
+    const f = new THREE.Mesh(new THREE.CapsuleGeometry(0.019, 0.07, 4, 10), glove);
+    f.rotation.x = Math.PI / 2; f.position.set(-0.47, 0.05 - i * 0.033, 0.03); pushMesh.add(f);
+  }
+  const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.06, 4, 10), glove);
+  thumb.rotation.z = Math.PI / 2.4; thumb.position.set(-0.49, 0.075, -0.01); pushMesh.add(thumb);
+  const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.05, 0.08, 20), M.cloth(0xc9452f));
+  cuff.rotation.z = Math.PI / 2; cuff.position.set(-0.63, -0.005, 0); pushMesh.add(cuff);
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.7, 20), M.cloth(0x2d3e5c));
+  arm.rotation.z = Math.PI / 2 - 0.12; arm.position.set(-1.0, 0.045, 0); pushMesh.add(arm);
+}
+R3.add(pushMesh);
+// フォースゲージの表示（液晶風）。値が変わったときだけ描き直す
+function drawGauge(F, inWin) {
+  const s = (Math.abs(F) < 0.5 ? 0 : F).toFixed(1);
+  if (s === gaugeShown) return;
+  gaugeShown = s;
+  const g = gaugeCtx;
+  g.fillStyle = inWin ? '#b9e6b0' : '#c4cdb8'; g.fillRect(0, 0, 256, 96);
+  g.fillStyle = '#16201a'; g.font = 'bold 60px ui-monospace, Consolas, monospace'; g.textAlign = 'right'; g.textBaseline = 'middle';
+  g.fillText(s, 206, 52);
+  g.font = 'bold 28px ui-monospace, Consolas, monospace'; g.fillText('N', 244, 60);
+  g.font = '15px ui-monospace, Consolas, monospace'; g.textAlign = 'left'; g.fillText('PUSH', 10, 16);
+  gaugeTex.needsUpdate = true;
+}
+drawGauge(0, false);
+// 手の目標位置マーカー（オレンジの矢印）
+const handMark = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.12, 16), M.glow(0xff7a45, 1.6));
 handMark.rotation.z = Math.PI; scene.add(handMark);
 const handLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineDashedMaterial({ color: 0xff7a45, dashSize: 0.04, gapSize: 0.03 }));
 scene.add(handLine);
 
-// のれんのテクスチャ
+// のれんのテクスチャ（藍染めに白抜きの「剛」）
 function norenTexture() {
   const c = document.createElement('canvas'); c.width = 512; c.height = 512;
   const g = c.getContext('2d');
   g.fillStyle = '#1f2f6b'; g.fillRect(0, 0, 512, 512);
+  // 藍染めのむら
+  for (let i = 0; i < 2500; i++) { g.fillStyle = `rgba(${Math.random() > 0.5 ? '255,255,255' : '0,0,20'},${Math.random() * 0.05})`; g.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 6, 1 + Math.random() * 3); }
   g.fillStyle = '#f2efe6'; g.font = 'bold 230px "Yu Mincho", "Noto Serif JP", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText('剛', 256, 270);
   g.fillStyle = '#0d1530';
   for (let i = 1; i < 3; i++) g.fillRect(i * 512 / 3 - 3, 0, 6, 512);
   const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   t.wrapS = THREE.RepeatWrapping; t.repeat.x = -1; // 布の節点順に合わせて左右反転
   return t;
 }
 const NOREN_TEX = norenTexture();
+const TOFU_M = M.tofu({ color: 0xece3cc, roughness: 0.5, clearcoat: 0.2, clearcoatRoughness: 0.45, bumpMap: tex.roughNoise(21, [3, 3]), bumpScale: 0.12, transmission: 0.18, thickness: 0.4, attenuationColor: new THREE.Color(0xf2e2c0), attenuationDistance: 0.5 });
+const NOREN_M = M.cloth(0xffffff, { map: NOREN_TEX, sheenColor: new THREE.Color(0x3a4f8a), sheenRoughness: 0.8, roughness: 0.9 });
+
+// 豆腐の見た目：物理の粗い表面（5×5×6 節点）を、細かい箱の表面へなめらかに補間して写す
+function tofuVisual(pgeo) {
+  const pp = pgeo.attributes.position.array, np = pp.length / 3;
+  let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < np; i++) for (let a = 0; a < 3; a++) { mn[a] = Math.min(mn[a], pp[i * 3 + a]); mx[a] = Math.max(mx[a], pp[i * 3 + a]); }
+  const NS = [4, 4, 5], key = (i, j, k) => i + ',' + j + ',' + k, map = new Map();
+  const gc = (v, a) => (v - mn[a]) / (mx[a] - mn[a]) * NS[a];
+  for (let i = 0; i < np; i++) map.set(key(...[0, 1, 2].map(a => Math.round(gc(pp[i * 3 + a], a)))), i);
+  const geo = new THREE.BoxGeometry(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2], 12, 12, 15);
+  geo.translate((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);
+  const vp = geo.attributes.position.array, nv = vp.length / 3, ix = new Int32Array(nv * 8), wt = new Float32Array(nv * 8);
+  for (let v = 0; v < nv; v++) {
+    const g = [0, 1, 2].map(a => gc(vp[v * 3 + a], a)), b = g.map((x, a) => Math.min(NS[a] - 1, Math.max(0, Math.floor(x + 1e-6)))), t = g.map((x, a) => Math.min(1, Math.max(0, x - b[a])));
+    let n = 0;
+    for (let c = 0; c < 8; c++) {
+      const o = [c & 1, (c >> 1) & 1, (c >> 2) & 1];
+      const w = o.reduce((s, oa, a) => s * (oa ? t[a] : 1 - t[a]), 1);
+      const id = map.get(key(b[0] + o[0], b[1] + o[1], b[2] + o[2]));
+      if (w > 1e-5 && id != null) { ix[v * 8 + n] = id; wt[v * 8 + n] = w; n++; }
+    }
+  }
+  const mesh = new THREE.Mesh(geo, TOFU_M);
+  mesh.frustumCulled = false;
+  return {
+    mesh, update() {
+      for (let v = 0; v < nv; v++) {
+        let x = 0, y = 0, z = 0;
+        for (let k = 0; k < 8; k++) { const w = wt[v * 8 + k]; if (!w) break; const i = ix[v * 8 + k] * 3; x += pp[i] * w; y += pp[i + 1] * w; z += pp[i + 2] * w; }
+        vp[v * 3] = x; vp[v * 3 + 1] = y; vp[v * 3 + 2] = z;
+      }
+      geo.attributes.position.needsUpdate = true; geo.computeVertexNormals();
+    }
+  };
+}
+// のれんの見た目：物理の布の形に、風でそよぐ小さな揺れを重ねる（押し棒が近づくと揺れは消える）
+function norenVisual(pgeo, x0, top, h) {
+  const geo = pgeo.clone(), pp = pgeo.attributes.position.array, vp = geo.attributes.position.array;
+  const mesh = new THREE.Mesh(geo, NOREN_M);
+  mesh.frustumCulled = false;
+  return {
+    mesh, update(t) {
+      const calm = Math.max(0, Math.min(1, (x0 - 0.08 - st.x) / 0.35));
+      for (let i = 0; i < vp.length; i += 3) {
+        const d = Math.max(0, top - pp[i + 1]) / h, z = pp[i + 2];
+        vp[i] = pp[i] + calm * d * d * (0.035 * Math.sin(t * 1.6 + z * 2.4) + 0.012 * Math.sin(t * 3.7 + z * 7.0));
+        vp[i + 1] = pp[i + 1]; vp[i + 2] = pp[i + 2] + calm * d * 0.01 * Math.sin(t * 1.1 + z * 3);
+      }
+      geo.attributes.position.needsUpdate = true; geo.computeVertexNormals();
+    }
+  };
+}
 
 // ---------- Ammo の世界 ----------
 let W = null; // 現在の世界
@@ -240,9 +390,8 @@ function buildWorld(target, lv) {
     Ammo.castObject(sb, Ammo.btCollisionObject).getCollisionShape().setMargin(0.02);
     world.addSoftBody(sb, 1, -1);
     sb.setActivationState(4);
-    geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xf3efe2, roughness: 0.7 }));
-    scene.add(mesh); S.meshes.push(mesh);
+    S.vis = tofuVisual(geo); // 表示用の細かい豆腐（物理の形を補間して写す）
+    R3.add(S.vis.mesh); S.meshes.push(S.vis.mesh);
     S.soft = sb; S.geo = geo; S.idx = idx;
     S.V0 = volumeOf(geo.attributes.position.array, idx); S.settle = 0; // 圧力でふくらんだ後の体積を基準にする
   } else if (target === 'noren') {
@@ -263,12 +412,17 @@ function buildWorld(target, lv) {
     const rail = rigidBox(world, 0.02, 0.02, w / 2 + 0.05, x0, top, 0, 0, 0.5);
     for (let i = 0; i <= segZ; i++) sb.appendAnchor(i, rail, false, 1);
     const geo = new THREE.PlaneGeometry(w, h, segZ, segY);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: NOREN_TEX, side: THREE.DoubleSide, roughness: 0.9 }));
-    mesh.frustumCulled = false;
-    scene.add(mesh); S.meshes.push(mesh);
-    const railMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, w + 0.2, 12), new THREE.MeshStandardMaterial({ color: 0x8b6b45 }));
+    S.vis = norenVisual(geo, x0, top, h);
+    R3.add(S.vis.mesh); S.meshes.push(S.vis.mesh);
+    // 竹の竿と、壁から竿を支える金具
+    const railMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, w + 0.24, 16), M.wood({ base: '#b89a5a', dark: '#7a6230', seed: 12, mat: { roughness: 0.45 } }));
     railMesh.rotation.x = Math.PI / 2; railMesh.position.set(x0, top, 0);
-    scene.add(railMesh); S.meshes.push(railMesh);
+    R3.add(railMesh); S.meshes.push(railMesh);
+    for (const z of [w / 2 + 0.06, -w / 2 - 0.06]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(WALL_X - x0, 0.016, 0.016), M.steel({ color: 0x3a3f46, roughness: 0.5 }));
+      arm.position.set((x0 + WALL_X) / 2, top, z);
+      R3.add(arm); S.meshes.push(arm);
+    }
     S.soft = sb; S.geo = geo;
   }
   if (S.soft) syncSoft(S);
@@ -429,6 +583,8 @@ function clearTarget() {
 }
 
 // ---------- 描画 ----------
+const HUD_MAX = 220, hud = RV.$('#forceHud');
+RV.$('#hudBand').style.cssText = `left:${F_MIN / HUD_MAX * 100}%;width:${(F_MAX - F_MIN) / HUD_MAX * 100}%`;
 const chart = RV.$('#chart'), cg = chart.getContext('2d');
 function drawChart() {
   const r = chart.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
@@ -462,9 +618,14 @@ function render() {
     RV.$('#holdBar').style.width = Math.min(100, st.hold / HOLD * 100) + '%';
     RV.$('#basis').textContent = st.basis || '—';
     drawChart();
+    if (W.vis) W.vis.update(performance.now() / 1000);
+    // 押せた力を大きく表示（画面上の HUD と、押し棒のフォースゲージ）
+    drawGauge(st.Fc, inWin);
+    RV.$('#hudF').textContent = f0(st.Fc);
+    hud.classList.toggle('in', inWin); hud.classList.toggle('over', st.Fc > F_MAX);
+    RV.$('#hudNeedle').style.left = Math.max(0, Math.min(100, st.Fc / HUD_MAX * 100)) + '%';
+    RV.$('#hudHold').style.width = Math.min(100, st.hold / HOLD * 100) + '%';
   }
-  controls.update();
-  renderer.render(scene, camera);
 }
 RV.loop(step, render, 1 / 120);
 

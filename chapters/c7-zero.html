@@ -9,6 +9,7 @@
 <script src="../shared/common.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gpu.js@2.16.0/dist/gpu-browser.min.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 <style>
   .grav-pad { display: flex; gap: 6px; }
   .grav-pad .btn { flex: 1; font-size: 18px; padding: 8px 0; user-select: none; touch-action: none; }
@@ -17,11 +18,15 @@
   .phase span.on { background: var(--accent); color: #1a0d06; font-weight: 700; }
   .phase span.done { background: #2a323d; color: #5c6876; text-decoration: line-through; }
   #stage { cursor: crosshair; touch-action: none; }
+  /* 重力の向きの表示（3D の上に重ねる） */
+  #gcv { position: absolute; right: 10px; top: 10px; width: 96px; height: 110px; pointer-events: none; z-index: 4; }
+  .view-hint { position: absolute; left: 14px; bottom: 10px; z-index: 4; font-size: 11px; color: var(--muted); pointer-events: none;
+    background: rgba(13,17,22,.6); padding: 3px 9px; border-radius: 999px; }
 </style>
 </head>
 <body>
 <main class="rv-main">
-  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <div class="rv-stage" id="stage"><canvas id="gcv" width="192" height="220"></canvas><div class="view-hint">右ドラッグ：視点を回す ／ ホイール：拡大・縮小</div></div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
@@ -55,7 +60,7 @@
       <p class="note">← / → キーを押している間、重力が回ります。画面をドラッグすると、その方向が「下」になります。</p>
       <div class="btns" style="margin-top:6px">
         <button class="btn" id="retry">やり直す</button>
-        <button class="btn" id="renderMode">描画: メタボール</button>
+        <button class="btn" id="renderMode">描画: 液面</button>
       </div>
     </div>
     <div class="panel">
@@ -107,10 +112,12 @@
 
 <script type="module">
 import Box2DFactory from 'https://cdn.jsdelivr.net/npm/liquidfun-wasm@7.0.0/dist/es/entry.js';
+import { createWorld, THREE, M, tex, roundedBox } from '../shared/real3d.js';
+import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
 
 RV.header({ id: 'c7', chap: '終章', title: '剛体ゼロ', libs: ['LiquidFun', 'gpu.js', 'Tone.js'] });
 if (window.Tone) RV.libOk('Tone.js');
-const stage = RV.$('#stage'), cv = RV.$('#cv'), ctx = cv.getContext('2d');
+const stage = RV.$('#stage'), gcv = RV.$('#gcv'), gctx = gcv.getContext('2d');
 const kBadge = RV.kappaBadge(stage);
 const log = RV.causal('#causal');
 
@@ -126,7 +133,6 @@ const CORE_TH = [0.6, 0.45, 0.3, 0.15];
 let B, world, ps, gpu = null, kernel = null, gridW = 0, gridH = 0, gpuMode = '-';
 let level = 0, kappa = 1, simT = 0, gAngle = -Math.PI / 2, groups = [], pairs = [], goalHold = 0, over = false, started = false;
 let renderMeta = true, castlePhase = 0, slowFrames = 0;
-let view = { s: 50, ox: 0, oy: 0, w: 800, h: 500 };
 
 for (const id of ['phCastle', 'phCore']) RV.$('#' + id).innerHTML = PHASES.map(p => `<span>${p}</span>`).join('');
 
@@ -160,7 +166,13 @@ function makeBox(cx, cy, hx, hy, phase, kind) {
   def.set_strength(1);
   const g = ps.CreateParticleGroup(def);
   B.destroy(def); B.destroy(shape);
-  return { g, kind, phase };
+  // 描画用：箱の寸法と、剛体のあいだ姿勢を求めるための「最初の粒の並び」（重心からのずれ）
+  const n = g.GetParticleCount(), i0 = g.GetBufferIndex(), H = heap(), pb = posBase();
+  const ref = new Float32Array(n * 2);
+  let mx = 0, my = 0;
+  for (let i = 0; i < n; i++) { mx += H[pb + 2 * (i0 + i)] / n; my += H[pb + 2 * (i0 + i) + 1] / n; }
+  for (let i = 0; i < n; i++) { ref[2 * i] = H[pb + 2 * (i0 + i)] - mx; ref[2 * i + 1] = H[pb + 2 * (i0 + i) + 1] - my; }
+  return { g, kind, phase, hx, hy, ref, off: [cx - mx, cy - my] };
 }
 
 // 同じ粒子位置・速度で、別の拘束（フラグ）の群に作り直す
@@ -275,16 +287,17 @@ RV.$('#gDown').onclick = () => { setGravity(-Math.PI / 2); log.add('重力を真
 addEventListener('keydown', e => { if (e.key === 'ArrowLeft') rotDir = 1; if (e.key === 'ArrowRight') rotDir = -1; if (e.key === 'ArrowDown') RV.$('#gDown').click(); });
 addEventListener('keyup', e => { if ((e.key === 'ArrowLeft' && rotDir === 1) || (e.key === 'ArrowRight' && rotDir === -1)) rotDir = 0; });
 let dragging = false;
+// 画面上の「世界の中心」から見たドラッグの向きを「下」にする（右ドラッグは視点の回転）
 function dragTo(e) {
-  const r = stage.getBoundingClientRect();
-  const dx = e.clientX - r.left - r.width / 2, dy = -(e.clientY - r.top - r.height / 2);
+  const o = W3 ? W3.toScreen(new THREE.Vector3(0, WH / 2, 0)) : (r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 }))(stage.getBoundingClientRect());
+  const dx = e.clientX - o.x, dy = -(e.clientY - o.y);
   if (Math.hypot(dx, dy) > 20) setGravity(Math.atan2(dy, dx));
 }
-stage.addEventListener('pointerdown', e => { dragging = true; stage.setPointerCapture(e.pointerId); dragTo(e); });
-stage.addEventListener('pointermove', e => { if (dragging) dragTo(e); });
-stage.addEventListener('pointerup', () => { dragging = false; log.add(`重力の向きを ${(gAngle * 180 / Math.PI).toFixed(0)}° にした → 全部の粒がその向きに引かれる`, [1], { arrow: true, t: simT }); });
+stage.addEventListener('pointerdown', e => { if (e.button !== 0) return; dragging = true; dragTo(e); });
+addEventListener('pointermove', e => { if (dragging) dragTo(e); });
+addEventListener('pointerup', () => { if (!dragging) return; dragging = false; log.add(`重力の向きを ${(gAngle * 180 / Math.PI).toFixed(0)}° にした → 全部の粒がその向きに引かれる`, [1], { arrow: true, t: simT }); });
 RV.$('#retry').onclick = () => reset();
-RV.$('#renderMode').onclick = e => { renderMeta = !renderMeta; e.target.textContent = '描画: ' + (renderMeta ? 'メタボール' : '粒子'); };
+RV.$('#renderMode').onclick = e => { renderMeta = !renderMeta; e.target.textContent = '描画: ' + (renderMeta ? '液面' : '粒子'); };
 RV.rulesList('#rules', [1, 4]);
 RV.$('#levels').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -372,116 +385,293 @@ window.__c7 = { finish, coreStats, get kappa() { return kappa; }, set kappa(v) {
   for (let i = 0; i < n; i++) { H[pb + 2 * (i0 + i)] += x - cx; H[pb + 2 * (i0 + i) + 1] += y - cy; }
 } };
 
-// ---------- 描画 ----------
+// ---------- 描画（three.js のリアル3D。物理は 2D のまま、x-y を縦の面に写して奥行きを付ける） ----------
 const MAXN = 4000;
 const posArr = new Float32Array(MAXN * 2), infoArr = new Float32Array(MAXN);
+const corePts = new Float32Array(MAXN * 2), castlePts = new Float32Array(MAXN * 2);
+const OX = -WW / 2;                    // 物理の x → 3D の x（世界の中央を原点に）
+const DEPTH = 0.8;                     // 煉瓦の奥行き [m]
+const ZH = 0.62;                       // 液面の厚みの半分（2D の場を奥行き方向へ伸ばす幅）
+const RES = 36;                        // MarchingCubes の解像度（重くならない程度に）
+const PH_COL = [0x8d96a3, 0xe08a4c, 0xd76f3f, 0x9a6fd1, 0x3f8de0];   // 相ごとの色（かたい → 水）
+let W3 = null, bricks, coreSolid, coreLight, mcCastle, mcCore, dots, castleMats, RHO = 40, fieldGPU = true;
+const F2D = new Float32Array(RES * RES);
+
+// gpu.js：2D の「粒の混み具合」の場 F(x,y) を格子点ごとに並列計算する（全部の粒との距離を足し合わせる）
+// この場を奥行き方向へ伸ばして MarchingCubes に渡すと、粒の集まりが「つながった液面」になる
 function setupGPU() {
   try {
     gpu = new GPU.GPU();
     gpuMode = gpu.mode;
-    const cpu = gpu.mode === 'cpu';
-    gridW = cpu ? 96 : 320; gridH = cpu ? 60 : 200;
-    kernel = gpu.createKernel(function (pos, info, n) {
-      const wx = (this.thread.x + 0.5) / this.constants.gw * this.constants.ww;
-      const wy = (this.thread.y + 0.5) / this.constants.gh * this.constants.wh;
-      const h2 = this.constants.h * this.constants.h;
-      let core = 0, other = 0, ph = 0;
+    kernel = gpu.createKernel(function (pos, n, x0, y0, dx, dy, h) {
+      const wx = x0 + dx * this.thread.x, wy = y0 + dy * this.thread.y;   // 整数×小数は小数を先に（gpu.js は左の型に合わせる）
+      const h2 = h * h;
+      let s = 0;
       for (let i = 0; i < this.constants.maxN; i++) {
         if (i >= n) break;
-        const dx = pos[2 * i] - wx, dy = pos[2 * i + 1] - wy;
-        const q = 1 - (dx * dx + dy * dy) / h2;
-        if (q > 0) {
-          const w = q * q * q;
-          if (info[i] < 0) { core += w; } else { other += w; ph += w * info[i]; }
-        }
+        const ex = pos[2 * i] - wx, ey = pos[2 * i + 1] - wy;
+        const q = 1 - (ex * ex + ey * ey) / h2;
+        if (q > 0) s += q * q * q;
       }
-      let r = 0, g = 0, b = 0, a = 0;
-      if (other > 0.0001) {
-        const p = ph / other;              // 0=剛体 1=弾性 2=ばね 3=粘性 4=水
-        const t = Math.min(1, Math.max(0, (other - 0.35) * 3));
-        // 剛体(灰青) → 弾性(橙) → ばね(赤橙) → 粘性(紫) → 水(青)
-        let cr = 0.42, cg = 0.48, cb = 0.58;
-        if (p < 1) { cr = 0.42 + (0.88 - 0.42) * p; cg = 0.48 + (0.54 - 0.48) * p; cb = 0.58 + (0.30 - 0.58) * p; }
-        else if (p < 2) { const u = p - 1; cr = 0.88 - 0.04 * u; cg = 0.54 - 0.12 * u; cb = 0.30 - 0.05 * u; }
-        else if (p < 3) { const u = p - 2; cr = 0.84 - 0.24 * u; cg = 0.42 - 0.02 * u; cb = 0.25 + 0.57 * u; }
-        else { const u = Math.min(1, p - 3); cr = 0.60 - 0.45 * u; cg = 0.40 + 0.15 * u; cb = 0.82 + 0.13 * u; }
-        r = cr * t; g = cg * t; b = cb * t; a = t;
-      }
-      if (core > 0.35) {
-        const t = Math.min(1, (core - 0.35) * 3);
-        r = r * (1 - t) + 0.36 * t; g = g * (1 - t) + 0.85 * t; b = b * (1 - t) + 1.0 * t; a = Math.max(a, t);
-      }
-      this.color(r, g, b, a);
+      return s;
     }, {
-      output: [gridW, gridH], graphical: true, constants: { gw: gridW, gh: gridH, ww: WW, wh: WH, h: R * 3.2, maxN: MAXN },
-      argumentTypes: { pos: 'Array', info: 'Array', n: 'Float' }, loopMaxIterations: MAXN
+      output: [RES, RES], constants: { maxN: MAXN }, loopMaxIterations: MAXN,
+      argumentTypes: { pos: 'Array', n: 'Float', x0: 'Float', y0: 'Float', dx: 'Float', dy: 'Float', h: 'Float' }
     });
     RV.libOk('gpu.js');
   } catch (e) {
     console.warn('gpu.js 初期化失敗', e);
-    RV.libOk('gpu.js', false); renderMeta = false; kernel = null;
+    RV.libOk('gpu.js', false); kernel = null; fieldGPU = false;
   }
 }
 
-function resize(w, h, dpr) {
-  view.w = w; view.h = h;
-  view.s = Math.min(w / (WW + 0.6), h / (WH + 0.6));
-  view.ox = (w - WW * view.s) / 2; view.oy = (h - WH * view.s) / 2;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+// 格子番号 2 → a、RES-3 → b になるように、MarchingCubes の箱（-1..1）を世界座標へ合わせる
+function axisMap(a, b) { const s = (b - a) * (RES / 2) / (RES - 5); return { s, c: a - s * (2 - RES / 2) / (RES / 2) }; }
+
+// 粒の集まり → 場 → 液面メッシュ
+function updateMC(mc, pts, m) {
+  if (!m) { mc.visible = false; return; }
+  let xa = 1e9, xb = -1e9, ya = 1e9, yb = -1e9;
+  for (let i = 0; i < m; i++) { const x = pts[2 * i], y = pts[2 * i + 1]; if (x < xa) xa = x; if (x > xb) xb = x; if (y < ya) ya = y; if (y > yb) yb = y; }
+  // 範囲が広いほど格子が粗くなるので、そのぶん影響半径 h を広げて穴が開かないようにする
+  const h0 = R * 3.2, cell = Math.max(xb - xa, yb - ya, 0.5) / (RES - 8);
+  const h = Math.max(h0, 1.35 * cell);
+  const mx = axisMap(xa - h, xb + h), my = axisMap(ya - h, yb + h), mz = axisMap(-ZH, ZH);
+  const x0 = mx.c - mx.s, dx = 2 * mx.s / RES, y0 = my.c - my.s, dy = 2 * my.s / RES;
+  F2D.fill(0);
+  let usedGPU = false;
+  if (fieldGPU && kernel) {
+    try {
+      const tk = performance.now();
+      const out = kernel(pts, m, x0, y0, dx, dy, h);
+      for (let j = 0; j < RES; j++) { const row = out[j]; for (let i = 0; i < RES; i++) F2D[j * RES + i] = row[i]; }
+      usedGPU = true;
+      // 遅い環境（ソフトウェアGL等）では場の計算を CPU に切り替える
+      slowFrames = performance.now() - tk > 45 ? slowFrames + 1 : Math.max(0, slowFrames - 1);
+      if (slowFrames > 20) { fieldGPU = false; RV.toast(stage, 'gpu.js の計算が重いので、場の計算を CPU に切り替えました'); }
+    } catch (e) { console.warn(e); fieldGPU = false; }
+  }
+  if (!usedGPU) {
+    // CPU 版：粒ごとに近くの格子点だけへ足し込む
+    const h2 = h * h;
+    for (let p = 0; p < m; p++) {
+      const px = pts[2 * p], py = pts[2 * p + 1];
+      const i0 = Math.max(0, Math.ceil((px - h - x0) / dx)), i1 = Math.min(RES - 1, Math.floor((px + h - x0) / dx));
+      const j0 = Math.max(0, Math.ceil((py - h - y0) / dy)), j1 = Math.min(RES - 1, Math.floor((py + h - y0) / dy));
+      for (let j = j0; j <= j1; j++) {
+        const ey = py - (y0 + j * dy);
+        for (let i = i0; i <= i1; i++) {
+          const ex = px - (x0 + i * dx), q = 1 - (ex * ex + ey * ey) / h2;
+          if (q > 0) F2D[j * RES + i] += q * q * q;
+        }
+      }
+    }
+  }
+  // 粒がぎっしり並んだ所で場がほぼ 1 になるように正規化（∫(1-r²/h²)³ dA = πh²/4）
+  const norm = 1 / (RHO * Math.PI * h * h / 4);
+  mc.reset();
+  const f = mc.field, S2 = RES * RES;
+  for (let k = 0; k < RES; k++) {
+    const z = mz.c + mz.s * (k - RES / 2) / (RES / 2), pz = 1 - (z / ZH) * (z / ZH);
+    if (pz <= 0) continue;
+    const base = k * S2, w = pz * norm;
+    for (let q = 0; q < S2; q++) f[base + q] = F2D[q] * w;
+  }
+  mc.update();
+  mc.position.set(mx.c + OX, my.c, mz.c);
+  mc.scale.set(mx.s, my.s, mz.s);
+  mc.visible = true;
 }
-const X = x => view.ox + x * view.s, Y = y => view.oy + (WH - y) * view.s;
 
+// 剛体の群の姿勢：最初の粒の並びと今の並びを重ねて、回転角を求める（2D の最小二乗）
+function rigidPose(o, H, pb) {
+  const g = o.g, n = g.GetParticleCount(), i0 = g.GetBufferIndex(), ref = o.ref;
+  let cx = 0, cy = 0;
+  for (let i = 0; i < n; i++) { cx += H[pb + 2 * (i0 + i)]; cy += H[pb + 2 * (i0 + i) + 1]; }
+  cx /= n; cy /= n;
+  if (!ref || ref.length !== 2 * n) return { x: cx, y: cy, a: 0 };
+  let sc = 0, ss = 0;
+  for (let i = 0; i < n; i++) {
+    const px = H[pb + 2 * (i0 + i)] - cx, py = H[pb + 2 * (i0 + i) + 1] - cy, rx = ref[2 * i], ry = ref[2 * i + 1];
+    sc += rx * px + ry * py; ss += rx * py - ry * px;
+  }
+  const a = Math.atan2(ss, sc), c = Math.cos(a), s = Math.sin(a);
+  return { x: cx + c * o.off[0] - s * o.off[1], y: cy + s * o.off[0] + c * o.off[1], a };
+}
+
+async function setup3D() {
+  W3 = await createWorld(stage, {
+    camera: [0.8, 6.6, 19], target: [0, 4.9, 0], fov: 38, fog: false, bloom: 0.5, groundSize: 80,
+    sun: [5, 14, 12], shadowBox: 11, background: 0x0b0f14
+  });
+  const S = W3.scene;
+  stage.appendChild(gcv); stage.appendChild(stage.querySelector('.view-hint'));   // 重ね表示を 3D の上へ
+  W3.ground.position.y = -0.5;
+  // 視点：左ドラッグは「重力の向き」に使うので、回転は右ドラッグ。回しすぎないよう制限
+  const C = W3.controls;
+  C.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+  C.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE };
+  C.enablePan = false;
+  C.minAzimuthAngle = -0.75; C.maxAzimuthAngle = 0.75;
+  C.minPolarAngle = 0.95; C.maxPolarAngle = 1.62;
+  stage.addEventListener('contextmenu', e => e.preventDefault());
+  // 画面の縦横比に合わせて、世界全体（16m×10m）が入る距離へ
+  function fit() {
+    const r = stage.getBoundingClientRect(), asp = Math.max(0.3, r.width / Math.max(1, r.height));
+    const vf = W3.camera.fov * Math.PI / 360, hf = Math.atan(Math.tan(vf) * asp);
+    const d = Math.max(8.9 / Math.tan(hf), 5.9 / Math.tan(vf)) + 1.0;
+    C.target.set(0, 4.9, 0);
+    W3.camera.position.set(0.06 * d, 4.9 + 0.09 * d, d);
+    C.minDistance = d * 0.45; C.maxDistance = d * 1.35;
+    C.update();
+  }
+  new ResizeObserver(fit).observe(stage);
+  fit();
+
+  // 壁・床（原理7・8 の「動かないもの」）：コンクリートと鋼板、棚は木の板
+  const concrete = new THREE.MeshStandardMaterial({ map: tex.concrete(11, [4, 1]), color: 0x8c939c, roughness: 0.95, bumpMap: tex.roughNoise(13, [6, 2]), bumpScale: 1.5 });
+  const steel = M.steel({ color: 0x9aa3ad, roughness: 0.38 });
+  const wood = M.wood({ base: '#9a6a3c', dark: '#5e3a1c' });
+  WALLS.forEach(([cx, cy, hx, hy], i) => {
+    const outer = i < 4;
+    const mat = outer ? concrete : i === 4 ? wood : steel;
+    const d = outer ? 1.8 : 1.1;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(2 * hx, 2 * hy, d), mat);
+    m.position.set(cx + OX, cy, outer ? -0.1 : 0);
+    W3.add(m);
+  });
+  // 奥の壁（影を受けて奥行きが分かる）
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(WW + 1, WH + 1), new THREE.MeshStandardMaterial({ map: tex.concrete(17, [5, 3]), color: 0x8a919a, roughness: 0.95 }));
+  back.position.set(0, WH / 2, -0.95);
+  W3.add(back, { cast: false });
+
+  // ゴール：半透明の緑の箱 ＋ 光る縁 ＋ 床の光る板 ＋ 看板
+  const gw = GOAL.x1 - GOAL.x0, gh = GOAL.y1 - GOAL.y0, gcx = (GOAL.x0 + GOAL.x1) / 2 + OX, gcy = (GOAL.y0 + GOAL.y1) / 2;
+  const gbox = new THREE.BoxGeometry(gw - 0.04, gh - 0.02, DEPTH + 0.5);
+  const gvol = new THREE.Mesh(gbox, new THREE.MeshBasicMaterial({ color: 0x6fdc8c, transparent: true, opacity: 0.07, depthWrite: false }));
+  gvol.position.set(gcx, gcy, 0);
+  const gedge = new THREE.LineSegments(new THREE.EdgesGeometry(gbox), new THREE.LineBasicMaterial({ color: new THREE.Color(0.5, 2.4, 1.0) }));
+  gedge.position.copy(gvol.position);
+  const gpad = new THREE.Mesh(new THREE.BoxGeometry(gw - 0.1, 0.03, DEPTH + 0.4), M.glow(0x6fdc8c, 1.6));
+  gpad.position.set(gcx, 0.015, 0);
+  const gsign = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex.label((g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = 'rgba(10,30,18,.75)'; g.strokeStyle = '#6fdc8c'; g.lineWidth = 6;
+    g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 22); g.fill(); g.stroke();
+    g.fillStyle = '#9ff0b4'; g.font = 'bold 64px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('GOAL', w / 2, h / 2 + 2);
+  }, 256, 128), transparent: true, depthTest: false }));
+  gsign.scale.set(1.5, 0.75, 1);
+  gsign.position.set(gcx, GOAL.y1 + 0.55, 0.5);
+  const glight = new THREE.PointLight(0x6fdc8c, 4, 5, 2);
+  glight.position.set(gcx, 1.6, 0.9);
+  S.add(gvol, gedge, gsign, glight); W3.add(gpad);
+
+  // 城の煉瓦（かたいうち）：石の質感の角丸の箱を InstancedMesh でまとめて描く
+  const castleN = groups.filter(o => o.kind === 'castle').length;
+  bricks = new THREE.InstancedMesh(await roundedBox(1, 1, 1, 0.05, 2), M.stone({ base: '#b3a487', seed: 5 }), castleN);
+  bricks.castShadow = bricks.receiveShadow = true;
+  bricks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  S.add(bricks);
+
+  // 最後の剛体コア：光るクロームの立方体 ＋ 光る縁 ＋ 周りを照らす水色の光
+  const cmat = new THREE.MeshPhysicalMaterial({ color: 0xbfefff, metalness: 1, roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x1d6c8f, emissiveIntensity: 0.18 });
+  coreSolid = new THREE.Mesh(await roundedBox(1, 1, 1, 0.08, 3), cmat);
+  const cedge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01)), new THREE.LineBasicMaterial({ color: new THREE.Color(0.6, 2.2, 3.2) }));
+  coreSolid.add(cedge);
+  W3.add(coreSolid);
+  coreLight = new THREE.PointLight(0x5cc8ff, 5, 5, 2);
+  S.add(coreLight);
+
+  // 溶けたあと：MarchingCubes の液面（城＝相ごとの質感、コア＝水色のゼリー）
+  castleMats = [
+    null,
+    M.jelly(PH_COL[1], { transmission: 0.3, roughness: 0.4, thickness: 1.2, attenuationDistance: 0.4, clearcoat: 0.4 }),   // ゴム状：ろうそくのろう
+    M.jelly(PH_COL[2], { transmission: 0.5, roughness: 0.25, thickness: 1.2, attenuationDistance: 0.5 }),                  // ばね状：グミ
+    M.jelly(PH_COL[3], { transmission: 0.35, roughness: 0.08, thickness: 1.5, attenuationDistance: 0.25, sheen: 0.3 }),  // どろどろ：水あめ
+    M.water({ thickness: 1.0 })                                                                                            // 水
+  ];
+  const mk = mat => { const mc = new MarchingCubes(RES, mat, false, false, 60000); mc.isolation = 0.5; mc.frustumCulled = false; mc.castShadow = mc.receiveShadow = true; mc.visible = false; S.add(mc); return mc; };
+  mcCastle = mk(castleMats[1]);
+  mcCore = mk(M.jelly(0x5cd8ff, { emissive: 0x1a7aa8, emissiveIntensity: 0.9, transmission: 0.6, attenuationDistance: 0.9 }));
+
+  // 粒子表示用（ボタンで切り替え）：全部の粒を小さな球で
+  dots = new THREE.InstancedMesh(new THREE.SphereGeometry(R * 1.25, 10, 8), new THREE.MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.6 }), MAXN);
+  dots.castShadow = true; dots.count = 0;
+  dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  S.add(dots);
+}
+
+// 重力の向き（右上に重ねて描く）
+function drawGravity() {
+  const g = gctx, s = 2;
+  g.setTransform(s, 0, 0, s, 0, 0);
+  g.clearRect(0, 0, 96, 110);
+  const ax = 48, ay = 48;
+  g.fillStyle = 'rgba(13,17,22,.72)'; g.beginPath(); g.arc(ax, ay, 40, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#ffd166'; g.fillStyle = '#ffd166'; g.lineWidth = 3;
+  g.beginPath(); g.arc(ax, ay, 30, 0, Math.PI * 2); g.globalAlpha = .25; g.stroke(); g.globalAlpha = 1;
+  const ex = ax + 26 * Math.cos(gAngle), ey = ay - 26 * Math.sin(gAngle);
+  g.beginPath(); g.moveTo(ax, ay); g.lineTo(ex, ey); g.stroke();
+  g.beginPath(); g.arc(ex, ey, 5, 0, Math.PI * 2); g.fill();
+  g.font = '11px sans-serif'; g.textAlign = 'center'; g.fillText('重力 g', ax, ay + 58);
+}
+
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _z = new THREE.Vector3(0, 0, 1), _c = new THREE.Color();
 function render() {
-  if (!world) return;
-  ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, view.w, view.h);
-  // ゴール
-  ctx.fillStyle = 'rgba(111,220,140,.10)'; ctx.strokeStyle = 'rgba(111,220,140,.6)'; ctx.setLineDash([6, 4]);
-  ctx.fillRect(X(GOAL.x0), Y(GOAL.y1), (GOAL.x1 - GOAL.x0) * view.s, (GOAL.y1 - GOAL.y0) * view.s);
-  ctx.strokeRect(X(GOAL.x0), Y(GOAL.y1), (GOAL.x1 - GOAL.x0) * view.s, (GOAL.y1 - GOAL.y0) * view.s);
-  ctx.setLineDash([]);
-  ctx.fillStyle = 'rgba(111,220,140,.8)'; ctx.font = '12px sans-serif'; ctx.fillText('GOAL', X(GOAL.x0) + 6, Y(GOAL.y1) + 16);
-
-  // 粒子を集める
+  if (!world || !W3) return;
+  // 粒子を集める（コアと城に分けておく）
   const H = heap(), pb = posBase();
-  let n = 0;
+  let n = 0, nc = 0, nk = 0;
   for (const o of groups) {
     const g = o.g, c = g.GetParticleCount(), i0 = g.GetBufferIndex();
     const tag = o.kind === 'core' ? -1 : o.phase;
     for (let i = 0; i < c && n < MAXN; i++, n++) {
-      posArr[2 * n] = H[pb + 2 * (i0 + i)]; posArr[2 * n + 1] = H[pb + 2 * (i0 + i) + 1]; infoArr[n] = tag;
+      const x = H[pb + 2 * (i0 + i)], y = H[pb + 2 * (i0 + i) + 1];
+      posArr[2 * n] = x; posArr[2 * n + 1] = y; infoArr[n] = tag;
+      if (tag < 0) { corePts[2 * nc] = x; corePts[2 * nc + 1] = y; nc++; }
+      else if (o.phase > 0) { castlePts[2 * nk] = x; castlePts[2 * nk + 1] = y; nk++; }
     }
   }
-  if (renderMeta && kernel) {
-    try {
-      const tk = performance.now();
-      kernel(posArr, infoArr, n);
-      // 遅い環境（ソフトウェアGL等）では自動で粒子描画に切り替える
-      slowFrames = performance.now() - tk > 45 ? slowFrames + 1 : Math.max(0, slowFrames - 1);
-      if (slowFrames > 20) { renderMeta = false; RV.$('#renderMode').textContent = '描画: 粒子'; RV.toast(stage, '描画が重いので粒子表示に切り替えました'); }
-      ctx.imageSmoothingEnabled = true;
-      ctx.globalCompositeOperation = 'lighter';   // 黒(空)は背景に影響しない
-      ctx.drawImage(kernel.canvas, X(0), Y(WH), WW * view.s, WH * view.s);
-      ctx.globalCompositeOperation = 'source-over';
-    } catch (e) { console.warn(e); renderMeta = false; }
+  const core = coreGroup();
+  // 粒が多すぎるときは液面をやめて粒子表示に（重くならないように）
+  const liquid = renderMeta && n <= 3000;
+  if (liquid) {
+    dots.count = 0;
+    // 城：かたいうちは石の煉瓦、溶けたら液面
+    let bi = 0;
+    for (const o of groups) {
+      if (o.kind !== 'castle' || o.phase !== 0) continue;
+      const p = rigidPose(o, H, pb);
+      _p.set(p.x + OX, p.y, 0); _q.setFromAxisAngle(_z, p.a); _s.set(2 * o.hx - 0.015, 2 * o.hy - 0.015, DEPTH);
+      bricks.setMatrixAt(bi++, _m.compose(_p, _q, _s));
+    }
+    bricks.count = bi; bricks.instanceMatrix.needsUpdate = true;
+    if (nk) { const ph = groups.find(o => o.kind === 'castle' && o.phase > 0).phase; mcCastle.material = castleMats[ph]; }
+    updateMC(mcCastle, castlePts, nk);
+    // コア：かたいうちはクロームの立方体、溶けたら水色のゼリー
+    if (core && core.phase === 0) {
+      const p = rigidPose(core, H, pb);
+      coreSolid.visible = true; coreSolid.position.set(p.x + OX, p.y, 0); coreSolid.rotation.set(0, 0, p.a);
+      mcCore.visible = false;
+    } else { coreSolid.visible = false; updateMC(mcCore, corePts, nc); }
   } else {
-    const cols = ['#5b6b84', '#e08a4c', '#d76f3f', '#9a6fd1', '#3f8de0'];
+    // 粒子表示：粒を 1 つずつ球で（色は相）
+    bricks.count = 0; mcCastle.visible = mcCore.visible = false; coreSolid.visible = false;
     for (let i = 0; i < n; i++) {
-      ctx.fillStyle = infoArr[i] < 0 ? '#5cd8ff' : cols[infoArr[i]];
-      ctx.fillRect(X(posArr[2 * i]) - R * view.s, Y(posArr[2 * i + 1]) - R * view.s, 2 * R * view.s, 2 * R * view.s);
+      _m.makeTranslation(posArr[2 * i] + OX, posArr[2 * i + 1], 0);
+      dots.setMatrixAt(i, _m);
+      dots.setColorAt(i, _c.set(infoArr[i] < 0 ? 0x5cd8ff : PH_COL[infoArr[i]]));
     }
+    dots.count = n; dots.instanceMatrix.needsUpdate = true;
+    if (dots.instanceColor) dots.instanceColor.needsUpdate = true;
   }
-  // 静的な壁（地面＝原理7 の「動かないもの」）
-  ctx.fillStyle = '#39424e';
-  for (const [cx, cy, hx, hy] of WALLS) ctx.fillRect(X(cx - hx), Y(cy + hy), 2 * hx * view.s, 2 * hy * view.s);
-  // 重力矢印
-  const ax = view.w - 54, ay = 58;
-  ctx.strokeStyle = '#ffd166'; ctx.fillStyle = '#ffd166'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.arc(ax, ay, 30, 0, Math.PI * 2); ctx.globalAlpha = .25; ctx.stroke(); ctx.globalAlpha = 1;
-  const ex = ax + 26 * Math.cos(gAngle), ey = ay - 26 * Math.sin(gAngle);
-  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
-  ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.fill();
-  ctx.font = '11px sans-serif'; ctx.fillText('g', ax - 3, ay + 46);
-  ctx.lineWidth = 1;
+  // コアを照らす光はコアの重心に付いていく
+  if (nc) {
+    let cx = 0, cy = 0; for (let i = 0; i < nc; i++) { cx += corePts[2 * i]; cy += corePts[2 * i + 1]; }
+    coreLight.position.set(cx / nc + OX, cy / nc + 0.9, 0.9);
+  }
+  drawGravity();
 
   // 計測
   const st = coreStats();
@@ -493,7 +683,7 @@ function render() {
     RV.$('#mSigma').style.color = sig < 1 ? 'var(--rigid)' : sig < 8 ? 'var(--warn)' : 'var(--bad)';
     RV.$('#mDof').textContent = st.phase === 0 ? '3' : String(2 * st.n);
     RV.$('#mGoal').textContent = (st.goal * 100).toFixed(0) + '%';
-    RV.$('#mN').textContent = `${n} / ${renderMeta && kernel ? 'gpu.js:' + gpuMode : '点'}`;
+    RV.$('#mN').textContent = `${n} / ${liquid ? (fieldGPU && kernel ? '液面 gpu.js:' + gpuMode : '液面 CPU') : '粒'}`;
     if (st.phase > 0 && sig > 5 && simT - lastSigmaLog > 4) {
       lastSigmaLog = simT;
       log.add(`σ=${sig.toFixed(1)}%：2点間距離が変わった＝剛体の定義が破れた`, [4], { t: simT });
@@ -504,6 +694,7 @@ function render() {
   RV.$('#phCastle').querySelectorAll('span').forEach((s, i) => s.className = i < pc ? 'done' : i === pc ? 'on' : '');
   RV.$('#phCore').querySelectorAll('span').forEach((s, i) => s.className = i < pk ? 'done' : i === pk ? 'on' : '');
 }
+window.__c7.view3D = () => ({ W3, mcCastle, mcCore, F2D, fieldGPU, kernel, castlePts });   // 確認用
 
 // ---------- 起動 ----------
 const base = 'https://cdn.jsdelivr.net/npm/liquidfun-wasm@7.0.0/dist/es/';
@@ -516,8 +707,9 @@ try {
   throw e;
 }
 setupGPU();
-RV.fitCanvas(cv, resize);
 reset(false);
+RHO = coreGroup().g.GetParticleCount() / 1.0;   // 粒の面密度（コアは 1m×1m）
+await setup3D();
 RV.loop(step, render, 1 / 60);
 RV.modal('終章　剛体ゼロ', `
   <p>剛体――<b>どの2点の距離も変わらない物体</b>――が、ついに世界から消えようとしている。城も、あなたが守ってきた最後のかたい塊（コア）も、粒になって溶けはじめた。</p>

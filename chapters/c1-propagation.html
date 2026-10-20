@@ -11,11 +11,31 @@
 <style>
   .window-info { font-family: var(--mono); font-size: 12px; }
   .hold { user-select: none; touch-action: none; }
+  /* 3D ステージ（上）＋ 動きの記録（下） */
+  #gl { position: absolute; left: 0; right: 0; top: 0; height: 64%; }
+  #tbar { position: absolute; top: 14px; left: 210px; height: 34px; width: calc(100% - 224px); z-index: 4; pointer-events: none; }
+  #hud { position: absolute; left: 0; right: 0; bottom: 0; height: 36%; z-index: 3;
+    background: linear-gradient(180deg, rgba(11,14,18,.94), #0b0e12); border-top: 1px solid var(--line); }
+  .lbl3 { position: absolute; z-index: 4; transform: translate(-50%, -100%); pointer-events: none; white-space: nowrap;
+    font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    background: rgba(13,17,22,.72); border: 1px solid var(--line2); color: var(--fg); }
+  .lbl3.hand { color: var(--warn); }
+  .lbl3.sub { font-weight: 400; color: var(--muted); font-size: 11px; background: rgba(13,17,22,.55); }
+    .lbl3.below { transform: translate(-50%, 6px); }
+  @media (max-width: 700px) { #tbar { left: 14px; top: 64px; width: calc(100% - 28px); } }
 </style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <main class="rv-main">
-  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <div class="rv-stage" id="stage">
+    <div id="gl"></div>
+    <canvas id="tbar"></canvas>
+    <canvas id="hud"></canvas>
+    <div class="lbl3 hand" id="lblHand" style="display:none"></div>
+    <div class="lbl3" id="lblBell">鐘</div>
+    <div class="lbl3 sub below" id="lblFloor">摩擦なしの床（エアトラック）</div>
+  </div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
@@ -87,6 +107,7 @@
 
 <script type="module">
 import RAPIER from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier2d-compat@0.14.0/rapier.es.js';
+import { createWorld, THREE, M, tex, kappaColor, roundedBox } from '../shared/real3d.js';
 
 RV.header({ id: 'c1', chap: '第1章', title: '押した力が届かない', libs: ['Rapier2D', 'Chart.js', 'Tone.js'] });
 if (window.Chart) RV.libOk('Chart.js');
@@ -117,15 +138,24 @@ const V_ARRIVE = 0.5 * HAND_V; // 「動き出した」とみなす速さ（手�
 const G_BLOCK = (0x0001 << 16) | 0x0002, G_BELL = (0x0002 << 16) | 0x0001;
 
 const stage = document.getElementById('stage');
-const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
 const kBadge = RV.kappaBadge(stage);
 const log = RV.causal('#causal');
 const $ = s => document.querySelector(s);
-
-let viewW = 800, viewH = 500, dpr = 1;
 const bodyFont = getComputedStyle(document.body).fontFamily;
-RV.fitCanvas(cv, (w, h, d) => { viewW = w; viewH = h; dpr = d; });
+
+// HTML キャンバス（時間窓バー・動きの記録）の DPR 合わせ
+function fit2D(cv) {
+  const o = { cv, ctx: cv.getContext('2d'), w: 1, h: 1, dpr: 1 };
+  const fit = () => {
+    const r = cv.getBoundingClientRect();
+    o.dpr = Math.min(2, window.devicePixelRatio || 1);
+    o.w = Math.max(1, r.width); o.h = Math.max(1, r.height);
+    cv.width = Math.round(o.w * o.dpr); cv.height = Math.round(o.h * o.dpr);
+  };
+  new ResizeObserver(fit).observe(cv); fit();
+  return o;
+}
+const hud = fit2D($('#hud')), tbar = fit2D($('#tbar'));
 
 // ---------------- 状態 ----------------
 let kappa = 1;
@@ -179,6 +209,7 @@ function theoryDelay() { return kappa >= 0.999 ? 0 : (N - 1) * Math.sqrt(M_BLOCK
 function setLevel(k) {
   kappa = k;
   kBadge.set(k);
+  applyLook();
   document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
   $('#levelNote').textContent = k >= 0.999
     ? '8個のブロックは1つのかたまり（剛体）。どの2点の間の距離も変わらない。'
@@ -306,90 +337,260 @@ function finish() {
     [{ label: 'もう一度', primary: true, onClick: startRound }, { label: '閉じる' }]);
 }
 
-// ---------------- 描画 ----------------
-function render() {
-  const w = viewW, h = viewH;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-  const sceneH = h * 0.56;
-  const worldW = BELL_X + 0.9;
-  const s = Math.min((w - 24) / worldW, sceneH / 2.2);
-  const ox = 12 + (w - 24 - worldW * s) / 2;
-  const gy = sceneH * 0.62;            // 床の高さ（ブロック中心の y）
-  const X = x => ox + x * s;
+// ---------------- 描画（three.js のリアル3D） ----------------
+// 物理の x（右）と y（上）を、縦の面 z=0 にそのまま写す。エアトラックの上面が y=0。
+const OX = 4.4;                  // 物理 x → 3D x のずらし（動きの中心を原点へ）
+const X3 = x => x - OX;
+const R3 = await createWorld($('#gl'), {
+  camera: [0, 2.6, 9], target: [0, 0.4, 0], fov: 34, background: 0x0e1319,
+  groundSize: 50, bloom: 0.45, sun: [3, 9, 7], shadowBox: 7, exposure: 1.05
+});
+R3.ground.position.y = -0.95;    // 床は実験台の下
+R3.bloom.threshold = 0.92;       // 光らせたい物（ランプ・動くブロック）だけがにじむように
+const C = R3.controls;
+C.enablePan = false;
+C.minAzimuthAngle = -0.75; C.maxAzimuthAngle = 0.75;
+C.minPolarAngle = 0.45; C.maxPolarAngle = 1.52;
 
-  // 床
-  ctx.fillStyle = '#1a2129'; ctx.fillRect(0, gy + W / 2 * s, w, 4);
-  ctx.fillStyle = '#56606c'; ctx.font = '11px ' + bodyFont; ctx.textAlign = 'left';
-  ctx.fillText('摩擦なしの床', 14, gy + W / 2 * s + 18);
+// --- 実験台とエアトラック ---
+const bench = new THREE.Group();
+const benchTop = new THREE.Mesh(new THREE.BoxGeometry(11.6, 0.07, 2.0), M.wood({ base: '#8a5a32', dark: '#4e2f16', seed: 4 }));
+benchTop.position.set(-0.3, -0.135, -0.1);
+bench.add(benchTop);
+const legGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.78, 12), legMat = M.steel({ color: 0x8f969f });
+for (const lx of [-5.8, 5.2]) for (const lz of [-0.95, 0.75]) {
+  const l = new THREE.Mesh(legGeo, legMat); l.position.set(lx, -0.56, lz); bench.add(l);
+}
+// エアトラック（穴のあいたアルミのレール。空気で浮かせるので摩擦なし）
+const holeTex = tex.label((g, w, h) => {
+  g.fillStyle = '#b9c0c8'; g.fillRect(0, 0, w, h);
+  g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(0, 0, w, h / 2);
+  g.fillStyle = '#3c434c';
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 4; j++) { g.beginPath(); g.arc((i + 0.5) * w / 8, (j + 0.5) * h / 4, 3.2, 0, 7); g.fill(); }
+}, 256, 128);
+holeTex.repeat.set(36, 1);
+const track = new THREE.Mesh(new THREE.BoxGeometry(9.4, 0.1, 0.62),
+  new THREE.MeshStandardMaterial({ color: 0xd5dae0, map: holeTex, metalness: 0.85, roughness: 0.32 }));
+track.position.set(X3(4.1), -0.05, 0);
+bench.add(track);
+// レールの両端のエンドキャップ
+for (const ex of [X3(-0.6), X3(8.8)]) {
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.7), M.paint(0x2b3138)); cap.position.set(ex, -0.03, 0); bench.add(cap);
+}
+R3.add(bench);
 
-  // ばね
-  if (!rigidBody && blocks.length) {
-    ctx.strokeStyle = '#ff7a45'; ctx.lineWidth = 1.5;
-    for (let i = 0; i < N - 1; i++) {
-      const xa = X(bx(i) + W / 2), xb = X(bx(i + 1) - W / 2);
-      ctx.beginPath();
-      const segs = 8;
-      for (let j = 0; j <= segs; j++) {
-        const xx = xa + (xb - xa) * j / segs;
-        const yy = gy + (j % 2 ? -1 : 1) * (j === 0 || j === segs ? 0 : 5);
-        j ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
-      }
-      ctx.stroke();
+// --- ブロック 8 個（番号入り） ---
+const blockGeo = await roundedBox(W, W, W, 0.035, 3);
+const numTex = [];
+for (let i = 0; i < N; i++) numTex.push(tex.label((g, w, h) => {
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#20262e'; g.font = `700 ${w * 0.5}px ${bodyFont}`;
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(i + 1), w / 2, h / 2 + w * 0.03);
+}, 128, 128));
+const blockMesh = [];
+for (let i = 0; i < N; i++) {
+  const m = new THREE.Mesh(blockGeo, M.steel());
+  m.position.set(X3(initialX(i)), W / 2, 0);
+  R3.add(m); blockMesh.push(m);
+}
+// κ=1：全部を1つのかたまりにつなぐ鋼の棒（剛体のしるし）
+const rodGeo = new THREE.CylinderGeometry(0.022, 0.022, 1, 14).rotateZ(Math.PI / 2);
+const rods = new THREE.Group();
+const rodMat = M.steel({ color: 0x8c96a2, roughness: 0.4 });
+for (const [ry, rz] of [[0.3, 0.11], [0.3, -0.11]]) {
+  const r = new THREE.Mesh(rodGeo, rodMat); r.position.set(0, ry, rz); r.scale.x = (N - 1) * A + 0.1; rods.add(r);
+}
+R3.add(rods);
+// κ<1：ブロックの間のコイルばね（伸び縮みが見える）
+class Helix extends THREE.Curve {
+  constructor(turns, r) { super(); this.turns = turns; this.r = r; }
+  getPoint(u, out = new THREE.Vector3()) {
+    const e = Math.min(1, u / 0.05, (1 - u) / 0.05);   // 両端はブロックの面の中心へ寄せる
+    const a = u * this.turns * Math.PI * 2;
+    return out.set(u, this.r * e * Math.cos(a), this.r * e * Math.sin(a));
+  }
+}
+const springGeo = new THREE.TubeGeometry(new Helix(9, 0.095), 260, 0.013, 6);
+const springMat = M.steel({ color: 0xd9dde3, roughness: 0.22 });
+const springs = [];
+for (let i = 0; i < N - 1; i++) { const s = new THREE.Mesh(springGeo, springMat); s.position.y = W / 2; R3.add(s); springs.push(s); }
+
+// --- 手（ゴム手袋）と、それを押し出す腕 ---
+const gloveMat = M.rubber(0xe8b04a, { roughness: 0.6 });
+const hand = new THREE.Group();
+const palm = new THREE.Mesh(await roundedBox(0.08, 0.34, 0.3, 0.035), gloveMat); palm.position.set(-0.04, 0, 0); hand.add(palm);
+const fGeo = new THREE.CapsuleGeometry(0.033, 0.15, 4, 10);
+[-0.105, -0.035, 0.035, 0.105].forEach((fz, j) => {
+  const f = new THREE.Mesh(fGeo, gloveMat); f.position.set(-0.045, 0.24 + (j === 1 || j === 2 ? 0.02 : 0), fz); f.rotation.x = fz * 0.6; hand.add(f);
+});
+const thumb = new THREE.Mesh(fGeo, gloveMat); thumb.position.set(-0.06, 0.02, 0.2); thumb.rotation.x = -1.0; hand.add(thumb);
+const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.12, 20).rotateZ(Math.PI / 2), M.rubber(0x3a3f47)); cuff.position.x = -0.13; hand.add(cuff);
+hand.position.y = W / 2;
+R3.add(hand);
+const armMat = M.steel({ color: 0x9aa2ac, roughness: 0.35 });
+const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 18).rotateZ(Math.PI / 2), armMat); arm.position.y = W / 2; R3.add(arm);
+const housing = new THREE.Mesh(await roundedBox(0.5, 0.56, 0.5, 0.05), M.paint(0x39424e));
+const HOUSING_X = X3(-0.75);
+housing.position.set(HOUSING_X, 0.18, 0); R3.add(housing);
+
+// --- 鐘（真ちゅう）と、ブロックが当たる受け板 ---
+const bellGroup = new THREE.Group();
+const BX = X3(BELL_X);
+const plate = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.62, 0.5), M.steel({ color: 0xa9b0b9 }));
+plate.position.set(BX + 0.03, 0.27, 0); bellGroup.add(plate);
+const pad = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.42, 0.4), M.rubber(0x1d2024)); pad.position.set(BX + 0.0, 0.25, 0); bellGroup.add(pad);
+const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.75, 16), M.steel({ color: 0x7d858f })); post.position.set(BX + 0.55, 0.8, 0); bellGroup.add(post);
+const brace = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.06), M.steel({ color: 0x7d858f })); brace.position.set(BX + 0.3, 0.42, 0); bellGroup.add(brace);
+const beam = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.07, 0.07), M.wood({ base: '#6b4325', dark: '#3a220f', seed: 9 })); beam.position.set(BX + 0.3, 1.66, 0); bellGroup.add(beam);
+const bellPivot = new THREE.Group(); bellPivot.position.set(BX + 0.12, 1.62, 0); bellGroup.add(bellPivot);
+const bellProfile = [[0, 0.44], [0.07, 0.44], [0.115, 0.41], [0.135, 0.35], [0.145, 0.25], [0.165, 0.15], [0.205, 0.07], [0.25, 0.015], [0.255, 0], [0.235, 0], [0.2, 0.05], [0.155, 0.13], [0.135, 0.24], [0.125, 0.34], [0.09, 0.39], [0, 0.4]]
+  .map(([r, y]) => new THREE.Vector2(r, y));
+const bellMat = M.brass({ roughness: 0.22, emissive: 0x000000 });
+const bellMesh = new THREE.Mesh(new THREE.LatheGeometry(bellProfile, 48), bellMat);
+bellMat.side = THREE.DoubleSide;
+bellMesh.position.y = -0.5; bellPivot.add(bellMesh);
+const clapper = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), M.steel()); clapper.position.y = -0.47; bellPivot.add(clapper);
+const hook = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.01, 8, 20), M.brass()); hook.position.y = -0.04; bellPivot.add(hook);
+// 時間窓ランプ（消灯／開：黄／成功：緑／失敗：赤）
+const lampMat = new THREE.MeshStandardMaterial({ color: 0x3a4756, emissive: 0x000000, roughness: 0.3 });
+const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.085, 24, 16), lampMat); lamp.position.set(BX + 0.55, 1.78, 0); bellGroup.add(lamp);
+const lampGlass = new THREE.Mesh(new THREE.SphereGeometry(0.11, 24, 16), M.glass({ transmission: 0.9, roughness: 0.1 })); lampGlass.position.copy(lamp.position); bellGroup.add(lampGlass);
+const lampLight = new THREE.PointLight(0xffd166, 0, 3, 2); lampLight.position.copy(lamp.position); bellGroup.add(lampLight);
+R3.add(bellGroup);
+let bellSwingT = -1, bellAmp = 0;
+
+// 既定のカメラ：動きの全体（手〜鐘）が横いっぱいに収まる距離
+const TARGET = new THREE.Vector3(-0.35, 0.45, 0);
+function frameCamera() {
+  const r = $('#gl').getBoundingClientRect();
+  const asp = Math.max(0.3, r.width / Math.max(1, r.height));
+  const vf = THREE.MathUtils.degToRad(R3.camera.fov), hf = 2 * Math.atan(Math.tan(vf / 2) * asp);
+  const d = Math.max(5.3 / Math.tan(hf / 2), 1.5 / Math.tan(vf / 2));
+  R3.controls.target.copy(TARGET);
+  R3.camera.position.copy(TARGET).addScaledVector(new THREE.Vector3(-0.14, 0.4, 1).normalize(), d);
+  C.minDistance = d * 0.35; C.maxDistance = d * 1.5;
+  C.update();
+}
+new ResizeObserver(frameCamera).observe($('#gl'));
+frameCamera();
+
+// レベルに合わせて質感を切りかえる：κ=1 は青い鋼、やわらかいほどオレンジのゼリー
+function applyLook() {
+  const rigid = kappa >= 0.999, col = kappaColor(kappa);
+  blockMesh.forEach((m, i) => {
+    m.material.dispose();
+    m.material = rigid
+      ? new THREE.MeshStandardMaterial({ color: col.clone().lerp(new THREE.Color(0xffffff), 0.35), map: numTex[i], metalness: 0.7, roughness: 0.3, emissive: col, emissiveMap: numTex[i], emissiveIntensity: 0 })
+      : M.jelly(col.getHex(), { map: numTex[i], emissive: col, emissiveMap: numTex[i], emissiveIntensity: 0, thickness: 0.4, attenuationDistance: 0.5 });
+    m.scale.set(1, 1, 1);
+  });
+  rods.visible = rigid;
+  springs.forEach(s => s.visible = !rigid);
+}
+
+const lblHand = $('#lblHand'), lblBell = $('#lblBell'), lblFloor = $('#lblFloor');
+const _p = new THREE.Vector3();
+function place(el, x, y, z) {
+  const s = R3.toScreen(_p.set(x, y, z)), r = stage.getBoundingClientRect();
+  el.style.left = (s.x - r.left) + 'px'; el.style.top = (s.y - r.top) + 'px';
+}
+const gapRest = GAP;
+
+function render(dt) {
+  // ---- ブロック・ばね・棒を物理に合わせる ----
+  for (let i = 0; i < blockMesh.length && blocks.length; i++) {
+    const m = blockMesh[i], v = bv(i);
+    m.position.set(X3(bx(i)), W / 2, 0);
+    m.material.emissiveIntensity = Math.min(1, Math.abs(v) / 3) * (rigidBody ? 0.8 : 1.1); // 動いているブロックほど光る
+    if (!rigidBody) {
+      // ばねの縮み（両どなりの平均）でブロックもむにゅっとつぶれる
+      const gl = i > 0 ? (bx(i) - bx(i - 1) - W) : gapRest, gr = i < N - 1 ? (bx(i + 1) - bx(i) - W) : gapRest;
+      const strain = Math.max(-0.6, Math.min(0.9, ((gapRest - gl) + (gapRest - gr)) / 2 / gapRest));
+      const sx = 1 - 0.22 * strain, sy = 1 / Math.sqrt(sx);
+      m.scale.set(sx, sy, sy);
+      m.position.y = W / 2 * sy;
     }
   }
-  // ブロック（速度で色付け）
-  for (let i = 0; i < blocks.length; i++) {
-    const v = bv(i);
-    const c = Math.min(1, Math.abs(v) / 3);
-    ctx.fillStyle = rigidBody ? `rgba(92,200,255,${0.35 + 0.5 * c})` : `rgba(255,122,69,${0.3 + 0.6 * c})`;
-    ctx.strokeStyle = rigidBody ? '#5cc8ff' : '#ff7a45';
-    ctx.lineWidth = 1.5;
-    const x = X(bx(i) - W / 2), y = gy - W / 2 * s;
-    ctx.fillRect(x, y, W * s, W * s); ctx.strokeRect(x, y, W * s, W * s);
-    ctx.fillStyle = '#e6ebf1'; ctx.textAlign = 'center';
-    ctx.fillText(String(i + 1), x + W * s / 2, gy + 4);
-  }
-  if (rigidBody) {
-    ctx.strokeStyle = '#5cc8ff'; ctx.setLineDash([4, 4]);
-    ctx.strokeRect(X(bx(0) - W / 2) - 4, gy - W / 2 * s - 4, (bx(N - 1) - bx(0) + W) * s + 8, W * s + 8);
-    ctx.setLineDash([]);
-  }
-  // 手
-  const hx = X(handX);
-  ctx.fillStyle = holding ? '#ffd166' : '#8d9aab';
-  ctx.fillRect(hx - 40, gy - 8, 40, 16);
-  ctx.beginPath(); ctx.arc(hx - 2, gy, 10, -Math.PI / 2, Math.PI / 2); ctx.fill();
-  if (Fhand > 0) {
-    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'right';
-    ctx.fillText(`反作用 ${Fhand.toFixed(0)} N`, hx - 4, gy - 16);
-  }
-  // 鐘
+  if (!rigidBody && blocks.length) {
+    for (let i = 0; i < N - 1; i++) {
+      const xa = X3(bx(i)) + W / 2 * blockMesh[i].scale.x, xb = X3(bx(i + 1)) - W / 2 * blockMesh[i + 1].scale.x;
+      springs[i].position.x = xa; springs[i].scale.x = Math.max(0.02, xb - xa);
+    }
+  } else if (rigidBody) rods.position.x = X3(bx(0)) - 0.05 + ((N - 1) * A + 0.1) / 2;
+  // ---- 手 ----
+  const hx = X3(handX);
+  hand.position.x = hx;
+  const armL = hx - 0.19 - (HOUSING_X + 0.25);
+  arm.scale.x = Math.max(0.01, armL); arm.position.x = HOUSING_X + 0.25 + armL / 2;
+  gloveMat.emissive.setHex(0xffb020); gloveMat.emissiveIntensity = holding ? 0.25 + Math.min(0.6, Fhand / 300) : 0;
+  // ---- 鐘とランプ ----
   const open = state === 'running' && t >= winOpen && t <= winOpen + WIN_W;
-  const bxp = X(BELL_X);
-  ctx.fillStyle = open ? '#ffd166' : (hitT != null ? '#6fdc8c' : '#3a4756');
-  ctx.beginPath();
-  ctx.moveTo(bxp, gy - 0.6 * s); ctx.quadraticCurveTo(bxp + 0.5 * s, gy - 0.6 * s, bxp + 0.3 * s, gy + 0.6 * s);
-  ctx.lineTo(bxp, gy + 0.6 * s); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#e6ebf1'; ctx.textAlign = 'center';
-  ctx.fillText(open ? '開！' : '鐘', bxp + 0.18 * s, gy - 0.7 * s);
+  let lc = 0x3a4756, li = 0;
+  if (open) { lc = 0xffd166; li = 4; }
+  else if (hitT != null) { const ok = hitT >= winOpen && hitT <= winOpen + WIN_W && hitV >= V_MIN; lc = ok ? 0x6fdc8c : 0xff5d73; li = 3; }
+  lampMat.color.setHex(lc); lampMat.emissive.setHex(lc); lampMat.emissiveIntensity = li;
+  lampLight.color.setHex(lc); lampLight.intensity = li * 0.6;
+  if (hitT != null && bellSwingT < 0) { bellSwingT = 0; bellAmp = 0.12 + 0.25 * Math.min(1, hitV / 2); }
+  if (hitT == null) bellSwingT = -1;
+  if (bellSwingT >= 0) {
+    bellSwingT += dt;
+    const k = Math.exp(-bellSwingT / 1.4);
+    bellPivot.rotation.z = bellAmp * k * Math.sin(bellSwingT * 2 * Math.PI * 1.3);
+    bellMat.emissive.setHex(0xffc060); bellMat.emissiveIntensity = 0.5 * k * k;
+  } else { bellPivot.rotation.z = 0; bellMat.emissiveIntensity = 0; }
 
-  // 時間窓バー
-  const barY = w < 700 ? 82 : 14, barX0 = w < 700 ? 14 : w * 0.3, barW = w < 700 ? w - 28 : w * 0.62, Tmax = 8;
-  const tx = tt => barX0 + Math.min(1, tt / Tmax) * barW;
-  ctx.fillStyle = '#1b222b'; ctx.fillRect(barX0, barY, barW, 10);
-  if (state !== 'idle') {
-    ctx.fillStyle = 'rgba(255,209,102,.7)'; ctx.fillRect(tx(winOpen), barY, tx(winOpen + WIN_W) - tx(winOpen), 10);
-    ctx.fillStyle = '#e6ebf1'; ctx.fillRect(tx(t) - 1, barY - 3, 2, 16);
-    if (hitT != null) { ctx.fillStyle = '#6fdc8c'; ctx.fillRect(tx(hitT) - 1, barY - 3, 3, 16); }
+  // ---- HTML ラベル ----
+  lblHand.style.display = Fhand > 0 ? '' : 'none';
+  if (Fhand > 0) { lblHand.textContent = `反作用 ${Fhand.toFixed(0)} N`; place(lblHand, hx - 0.1, 0.78, 0); }
+  lblBell.textContent = open ? '開！' : '鐘';
+  lblBell.style.color = open ? 'var(--warn)' : '';
+  place(lblBell, BX + 0.55, 2.0, 0);
+  place(lblFloor, X3(5.2), -0.17, 0.9);
+
+  drawTimeBar();
+  drawHeat();
+
+  // メーター
+  $('#mT').textContent = t.toFixed(2) + ' s';
+  $('#mF').textContent = Fhand.toFixed(0) + ' N';
+  $('#mFmax').textContent = Fmax.toFixed(0) + ' N';
+  $('#mV').textContent = (blocks.length ? bv(N - 1) : 0).toFixed(2) + ' m/s';
+  if (chart && forceData.length !== chart._lastLen) {
+    chart._lastLen = forceData.length;
+    chart.update('none');
   }
-  ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
-  ctx.fillText(`t = ${t.toFixed(2)} s`, barX0, barY + 24);
+}
 
-  // ---- 時空図（ブロック番号 × 時間、色＝速度） ----
-  const hy0 = sceneH + 26, hh = h - hy0 - 26;
+// 時間窓バー（ステージ上部）
+function drawTimeBar() {
+  const { ctx, w, h, dpr } = tbar;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const Tmax = 8, bx0 = 0, bw = w;
+  const tx = tt => bx0 + Math.min(1, tt / Tmax) * bw;
+  ctx.fillStyle = 'rgba(13,17,22,.78)'; ctx.fillRect(bx0, 4, bw, 10);
+  ctx.strokeStyle = '#334050'; ctx.strokeRect(bx0 + 0.5, 4.5, bw - 1, 9);
+  if (state !== 'idle') {
+    ctx.fillStyle = 'rgba(255,209,102,.8)'; ctx.fillRect(tx(winOpen), 4, tx(winOpen + WIN_W) - tx(winOpen), 10);
+    ctx.fillStyle = '#e6ebf1'; ctx.fillRect(tx(t) - 1, 1, 2, 16);
+    if (hitT != null) { ctx.fillStyle = '#6fdc8c'; ctx.fillRect(tx(hitT) - 1, 1, 3, 16); }
+  }
+  ctx.font = '11px ' + bodyFont; ctx.textAlign = 'left';
+  ctx.fillStyle = '#c4ccd6';
+  ctx.fillText(`t = ${t.toFixed(2)} s`, bx0, 29);
+  ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'right';
+  ctx.fillText('黄色＝鐘が開いている時間', bx0 + bw, 29);
+}
+
+// 時空図（ブロック番号 × 時間、色＝速度）— ステージ下部
+function drawHeat() {
+  const { ctx, w, h, dpr } = hud;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = '11px ' + bodyFont;
+  const hy0 = 26, hh = h - hy0 - 24;
   ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
-  ctx.fillText(w < 700 ? '動きの記録（縦＝ブロック、横＝時間、明るい＝速い）' : '動きの記録：縦＝ブロック番号、横＝時間、明るい＝速い（かたい列は縦一直線、やわらかい列は斜めの波）', 14, hy0 - 8);
+  ctx.fillText(w < 700 ? '動きの記録（縦＝ブロック、横＝時間、明るい＝速い）' : '動きの記録：縦＝ブロック番号、横＝時間、明るい＝速い（かたい列は縦一直線、やわらかい列は斜めの波）', 14, 17);
   const hx0 = 40, hw = w - 56;
   ctx.fillStyle = '#10151b'; ctx.fillRect(hx0, hy0, hw, hh);
   const rowH = hh / N, span = 6;
@@ -410,16 +611,6 @@ function render() {
   if (state !== 'idle') {
     ctx.strokeStyle = 'rgba(255,209,102,.5)';
     ctx.strokeRect(hx0 + winOpen / span * hw, hy0, WIN_W / span * hw, hh);
-  }
-
-  // メーター
-  $('#mT').textContent = t.toFixed(2) + ' s';
-  $('#mF').textContent = Fhand.toFixed(0) + ' N';
-  $('#mFmax').textContent = Fmax.toFixed(0) + ' N';
-  $('#mV').textContent = (blocks.length ? bv(N - 1) : 0).toFixed(2) + ' m/s';
-  if (chart && forceData.length !== chart._lastLen) {
-    chart._lastLen = forceData.length;
-    chart.update('none');
   }
 }
 
@@ -465,7 +656,8 @@ window.__c1 = {
 
 RV.rulesList('#rules', [1, 2, 3, 4, 5, 9]);
 setLevel(1);
-RV.loop(step, render, DT);
+RV.loop(step, () => {}, DT);
+R3.onFrame(render);
 
 RV.modal('第1章 押した力が届かない',
   `<p>ある朝、世界から<b>剛体</b>が消えはじめた。どんなに押しても形を変えないはずの「かたい物」が、ゼリーのようにたわみ出したのだ。押した力は、もう一瞬では向こう側に届かない。</p>

@@ -5,17 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>転がれない円柱</title>
 <link rel="stylesheet" href="../shared/common.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 <style>
   #chart-wrap { position: relative; height: 170px; }
   .ebar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; background: #121820; margin: 4px 0; }
   .ebar i { display: block; height: 100%; }
   .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
   .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; background: var(--c); vertical-align: -1px; }
+  /* 3D ステージ上の HTML ラベル */
+  .lbl3d { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+  .lbl3d .l3 { position: absolute; left: 0; top: 0; font: 700 12px var(--mono); white-space: nowrap; padding: 2px 7px; border-radius: 6px; background: rgba(10,13,16,.62); border: 1px solid rgba(255,255,255,.08); }
+  .lbl3d .gold { color: #ffd166; } .lbl3d .tick { color: #c9d3df; font-weight: 400; font-size: 11px; padding: 0 4px; background: rgba(10,13,16,.45); } .lbl3d .green { color: #8ff0a8; border-color: rgba(111,220,140,.45); }
+  .hud3d { position: absolute; left: 14px; bottom: 12px; z-index: 3; pointer-events: none; font: 12px var(--mono); color: #b4c0ce; background: rgba(10,13,16,.55); padding: 4px 9px; border-radius: 6px; }
 </style>
 </head>
 <body>
 <main class="rv-main">
-  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <div class="rv-stage" id="stage"><div class="lbl3d" id="lbl3d"></div><div class="hud3d" id="hud3d"></div></div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
@@ -118,14 +124,13 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     { k: 0.08, target: 7.2, note: 'ほとんどゼリーのようなタイヤ。丸い形を保つことすら難しい。' }
   ];
 
-  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const stage = $('#stage');
   const kb = RV.kappaBadge(stage);
   const log = RV.causal('#causal');
   let level = 0, alphaDeg = 25, mu = 0.5;
   let world, ground, hub, bodies = [], geom = null;
   let state = 'ready'; // ready | running | done
   let t = 0, still = 0, flags = {}, samples = [], attempts = 0;
-  let view = { s: 40, ox: 0, oy: 0, w: 800, h: 500, dpr: 1 };
   let stopX = null, bottomInfo = null;
 
   // ---------- コース ----------
@@ -185,7 +190,6 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     for (const b of bodies) b.setAwake(false);
     t = 0; still = 0; flags = {}; samples = []; stopX = null; bottomInfo = null;
     state = 'ready';
-    fitView();
     updateMeters();
     resetChart();
     $('#m-stop').textContent = '—';
@@ -329,81 +333,8 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
   }
 
   // ---------- 描画 ----------
-  function fitView() {
-    if (!geom) return;
-    const x0 = -1.2, x1 = geom.xEnd + 0.4;
-    const y0 = -1.1, y1 = Math.max(geom.H + 1.2, 3);
-    const s = Math.min(view.w / (x1 - x0), view.h / (y1 - y0));
-    view.s = s;
-    view.ox = (view.w - (x1 - x0) * s) / 2 - x0 * s;
-    view.oy = view.h - ((view.h - (y1 - y0) * s) / 2) + y0 * s;
-  }
-  const X = x => view.ox + x * view.s, Y = y => view.oy - y * view.s;
-
-  function render() {
-    const { w, h, dpr } = view;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, w, h);
-    if (!geom) return;
-    // 砂地と目標ゾーン
-    const tgt = LEVELS[level].target;
-    ctx.fillStyle = '#3a2f1d';
-    ctx.fillRect(X(geom.sand0), Y(0), SAND_LEN * view.s, 0.35 * view.s);
-    ctx.fillStyle = 'rgba(111,220,140,.22)';
-    ctx.fillRect(X(geom.sand0 + tgt - HALF_ZONE), Y(2.2), 2 * HALF_ZONE * view.s, 2.2 * view.s);
-    ctx.strokeStyle = '#6fdc8c'; ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(X(geom.sand0 + tgt), Y(2.2)); ctx.lineTo(X(geom.sand0 + tgt), Y(0)); ctx.stroke(); ctx.setLineDash([]);
-    // 目盛り
-    ctx.fillStyle = '#8d9aab'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
-    for (let i = 0; i <= SAND_LEN; i++) {
-      const x = X(geom.sand0 + i);
-      ctx.fillRect(x, Y(0) + 0.35 * view.s, 1, i % 5 === 0 ? 8 : 4);
-      if (i % 2 === 0) ctx.fillText(i + 'm', x, Y(0) + 0.35 * view.s + 20);
-    }
-    // 地面
-    ctx.strokeStyle = '#c9d3df'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    geom.verts.forEach((v, i) => i ? ctx.lineTo(X(v.x), Y(v.y)) : ctx.moveTo(X(v.x), Y(v.y)));
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(201,211,223,.06)';
-    ctx.beginPath(); ctx.moveTo(X(geom.verts[0].x), Y(-1)); geom.verts.forEach(v => ctx.lineTo(X(v.x), Y(v.y))); ctx.lineTo(X(geom.xEnd), Y(-1)); ctx.fill();
-    // 角度表示
-    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 1;
-    const bx = geom.X0, r = 1.0 * view.s;
-    ctx.beginPath(); ctx.arc(X(bx), Y(0), r, Math.PI, Math.PI + geom.al); ctx.stroke();
-    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'left';
-    ctx.fillText(`α=${alphaDeg.toFixed(1)}°`, X(bx) - r - 50, Y(0) - 8);
-    // 円柱
-    const rigid = LEVELS[level].k >= 1;
-    if (rigid) {
-      const p = hub.getPosition(), ang = hub.getAngle();
-      ctx.fillStyle = 'rgba(92,200,255,.25)'; ctx.strokeStyle = '#5cc8ff'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), A * view.s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      for (let i = 0; i < 3; i++) {
-        const a = ang + i * Math.PI * 2 / 3;
-        ctx.beginPath(); ctx.moveTo(X(p.x), Y(p.y)); ctx.lineTo(X(p.x + A * Math.cos(a)), Y(p.y + A * Math.sin(a))); ctx.stroke();
-      }
-    } else {
-      const rim = hub.rim, hp = hub.getPosition();
-      ctx.fillStyle = 'rgba(255,122,69,.22)'; ctx.strokeStyle = '#ff7a45'; ctx.lineWidth = 2;
-      ctx.beginPath();
-      rim.forEach((b, i) => { const p = b.getPosition(); i ? ctx.lineTo(X(p.x), Y(p.y)) : ctx.moveTo(X(p.x), Y(p.y)); });
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,122,69,.45)'; ctx.lineWidth = 1;
-      rim.forEach(b => { const p = b.getPosition(); ctx.beginPath(); ctx.moveTo(X(hp.x), Y(hp.y)); ctx.lineTo(X(p.x), Y(p.y)); ctx.stroke(); });
-      ctx.fillStyle = '#ff7a45';
-      rim.forEach(b => { const p = b.getPosition(); ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 0.09 * view.s, 0, Math.PI * 2); ctx.fill(); });
-      ctx.beginPath(); ctx.arc(X(hp.x), Y(hp.y), 0.12 * view.s, 0, Math.PI * 2); ctx.fill();
-    }
-    // 停止マーカー
-    if (stopX != null) {
-      ctx.fillStyle = '#ffd166';
-      ctx.beginPath(); ctx.moveTo(X(geom.sand0 + stopX), Y(0) - 2); ctx.lineTo(X(geom.sand0 + stopX) - 6, Y(0) - 14); ctx.lineTo(X(geom.sand0 + stopX) + 6, Y(0) - 14); ctx.fill();
-    }
-    ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
-    ctx.fillText(`試行 ${attempts}  ／  目標：砂地から ${tgt.toFixed(1)} m ± ${HALF_ZONE} m`, 14, h - 12);
-    updateMeters();
-  }
+  // ステージの描画は下の three.js モジュール（リアル3D）が担当。ここでは数値表示だけ更新する
+  function render() { updateMeters(); }
 
   function updateMeters() {
     if (!bodies.length) return;
@@ -486,7 +417,6 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
   $('#reset').addEventListener('click', build);
   window.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); launch(); } });
 
-  RV.fitCanvas(cv, (w, h, dpr) => { view.w = w; view.h = h; view.dpr = dpr; fitView(); });
   initChart();
   syncUI();
   build();
@@ -497,7 +427,11 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
   window.C2 = {
     get state() { return state; }, get stop() { return stopX; }, get bottom() { return bottomInfo; },
     get level() { return level; }, setLevel, launch,
-    set(a, m) { alphaDeg = a; mu = m; $('#alpha').value = a; $('#mu').value = m; syncUI(); build(); }
+    set(a, m) { alphaDeg = a; mu = m; $('#alpha').value = a; $('#mu').value = m; syncUI(); build(); },
+    // 3D 描画モジュールが読む状態
+    get geom() { return geom; }, get hub() { return hub; }, get bodies() { return bodies; },
+    get attempts() { return attempts; }, get alpha() { return alphaDeg; }, get kappa() { return LEVELS[level].k; },
+    get target() { return LEVELS[level].target; }, HALF_ZONE, SAND_LEN, A
   };
 
   RV.modal('第2章　転がれない円柱',
@@ -507,6 +441,312 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
      <p class="note">操作：スライダーで α・μ を動かす →「転がす」（Space）で円柱が坂を下り、砂地で止まる。止まった位置で★が決まる。</p>`,
     [{ label: 'はじめる', primary: true }]);
 })();
+</script>
+<script type="module">
+// ---------- リアル3D描画（three.js + shared/real3d.js） ----------
+// 物理（Planck.js）は2Dのまま。x, y を奥行き z=0 の鉛直面に写し、物体に厚みと質感を与える
+import { createWorld, M, tex, THREE, kappaColor } from '../shared/real3d.js';
+const C2 = window.C2, $ = RV.$;
+const stage = $('#stage'), lbl = $('#lbl3d'), hud = $('#hud3d');
+const Y0 = 1;          // コース全体を床から持ち上げる量（コースの底 y=-1 が床に来る）
+const D = 1.6;         // コースの奥行き
+const CYL = 0.9;       // 円柱の長さ（奥行き方向）
+
+const W = await createWorld(stage, {
+  camera: [10, 6, 30], target: [10, 2, 0], fov: 32, groundSize: 140, bloom: 0.45,
+  exposure: 1.05, shadowBox: 18, background: 0x0d1218
+});
+// 3D キャンバスはいちばん下に（κバッジやラベルを上に重ねる）
+const cvs = W.renderer.domElement;
+stage.insertBefore(cvs, stage.firstChild);
+cvs.style.position = 'absolute'; cvs.style.inset = '0';
+W.sun.position.set(14, 18, 14); W.sun.target.position.set(10, 0, 0);
+
+// 視点の回転は控えめに制限（コースが横から見える範囲）
+const ctl = W.controls;
+ctl.minPolarAngle = Math.PI * 0.30; ctl.maxPolarAngle = Math.PI * 0.49;
+ctl.minAzimuthAngle = -0.7; ctl.maxAzimuthAngle = 0.7;
+ctl.minDistance = 6; ctl.maxDistance = 45;
+let autoFrame = true; // ユーザーが視点を動かすまでは自動でコース全体を写す
+ctl.addEventListener('start', () => { autoFrame = false; });
+cvs.addEventListener('dblclick', () => { autoFrame = true; }); // ダブルクリックで視点を元に戻す
+
+// ---------- 背景：実験室の奥の壁 ----------
+const wallMat = new THREE.MeshStandardMaterial({ map: tex.concrete(5, [10, 3]), color: 0x8a939e, roughness: 0.95 });
+const wall = W.add(new THREE.Mesh(new THREE.PlaneGeometry(80, 18), wallMat), { cast: false });
+wall.position.set(10, 9, -6);
+
+// ---------- コース（geom が変わったら作り直す） ----------
+const course = new THREE.Group(); course.position.y = Y0; W.scene.add(course);
+const mSlope = new THREE.MeshStandardMaterial({ map: tex.concrete(11, [0.5, 0.5]), color: 0xb9c0c8, roughness: 0.9 });
+const mPlank = M.wood({ base: '#b07a43', dark: '#6a3f1d', seed: 4 });
+const sandTex = tex.label((g, w, h) => {
+  g.fillStyle = '#cdb48a'; g.fillRect(0, 0, w, h);
+  let s = 9; const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < 60000; i++) {
+    const v = r(); g.fillStyle = v > 0.55 ? `rgba(255,246,220,${r() * 0.5})` : `rgba(60,44,24,${r() * 0.45})`;
+    g.fillRect(r() * w, r() * h, 1 + r() * 2, 1 + r() * 2);
+  }
+});
+sandTex.repeat.set(12, 1.2);
+const mSand = new THREE.MeshStandardMaterial({ map: sandTex, color: 0xa89c8a, roughness: 1, bumpMap: tex.roughNoise(14, [24, 3]), bumpScale: 1.2 });
+const zoneMat = new THREE.MeshBasicMaterial({ color: 0x6fdc8c, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
+const zoneEdgeMat = M.glow(0x6fdc8c, 2.2);
+const goldMat = M.glow(0xffd166, 2.5);
+const centerMat = M.glow(0xb8ffcb, 3.2), poleMat = M.steel();
+const flagMat = new THREE.MeshStandardMaterial({ color: 0x6fdc8c, emissive: 0x2a8a45, emissiveIntensity: 0.6, side: THREE.DoubleSide, roughness: 0.8 });
+
+const ownMat = m => { m.userData.own = true; return m; }; // 作り直すときに捨てる材質の印
+function disposeGroup(g) {
+  g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.userData && o.material.userData.own) { o.material.map && o.material.map.dispose(); o.material.dispose(); } });
+  g.clear();
+}
+// 砂地の目盛り（前面に貼る定規）
+function rulerTexture(len) {
+  const pxm = 200, w = Math.round(len * pxm), h = 96;
+  return tex.label((g) => {
+    g.fillStyle = '#e9e1cc'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#2a2219'; g.font = 'bold 44px Consolas, monospace'; g.textAlign = 'center';
+    for (let i = 0; i <= len * 10; i++) {
+      const x = Math.min(w - 2, Math.max(2, i * pxm / 10));
+      const big = i % 10 === 0, mid = i % 5 === 0;
+      g.fillRect(x - (big ? 2 : 1), 0, big ? 4 : 2, big ? 34 : mid ? 24 : 14);
+      if (big && (i / 10) % 2 === 0) g.fillText((i / 10) + 'm', Math.min(w - 50, Math.max(40, x)), 84);
+    }
+  }, w, h);
+}
+
+function buildCourse(geom) {
+  disposeGroup(course);
+  const v = geom.verts;
+  // 斜面〜床〜奥の壁の断面を押し出して、厚みのあるコンクリート台にする
+  const sh = new THREE.Shape();
+  sh.moveTo(v[0].x, -1);
+  for (const p of v) sh.lineTo(p.x, p.y);
+  sh.lineTo(geom.xEnd + 0.35, 1.2); sh.lineTo(geom.xEnd + 0.35, -1); sh.closePath();
+  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, { depth: D, bevelEnabled: false, curveSegments: 4 }), mSlope);
+  body.position.z = -D / 2;
+  course.add(body);
+  // 斜面の上に木の板（転がる面）を1枚敷く
+  const al = geom.al, sLen = Math.hypot(v[2].x - v[0].x, v[2].y - v[0].y);
+  const plank = new THREE.Mesh(new THREE.BoxGeometry(sLen, 0.05, D + 0.04), mPlank);
+  plank.position.set((v[0].x + v[2].x) / 2 + 0.024 * Math.sin(al), (v[0].y + v[2].y) / 2 - 0.024 * Math.cos(al), 0);
+  plank.rotation.z = -al;
+  course.add(plank);
+  // 砂場（表面は y=0、厚さ 0.35）
+  const sand = new THREE.Mesh(new THREE.BoxGeometry(C2.SAND_LEN, 0.36, D + 0.02), mSand);
+  sand.position.set(geom.sand0 + C2.SAND_LEN / 2, -0.17, 0);
+  course.add(sand);
+  // 前面の定規
+  const rmat = new THREE.MeshStandardMaterial({ map: rulerTexture(C2.SAND_LEN), color: 0x8c877c, roughness: 0.8 }); rmat.userData.own = true;
+  const ruler = new THREE.Mesh(new THREE.PlaneGeometry(C2.SAND_LEN, 0.3), rmat);
+  ruler.position.set(geom.sand0 + C2.SAND_LEN / 2, -0.58, D / 2 + 0.01);
+  course.add(ruler);
+  // 角度 α の弧（斜面のふもと、前面に光る線で）
+  const arc = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.022, 6, 40, al), goldMat);
+  arc.rotation.z = Math.PI - al;
+  arc.position.set(geom.X0, 0.02, D / 2 + 0.06);
+  course.add(arc);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.03, 0.03), goldMat);
+  base.position.set(geom.X0 - 0.62, 0.02, D / 2 + 0.06);
+  course.add(base);
+  W.shadow(course);
+}
+
+// ---------- 目標ゾーン（光る緑の枠） ----------
+const zone = new THREE.Group(); W.scene.add(zone);
+function buildZone(geom, target) {
+  disposeGroup(zone);
+  const hz = C2.HALF_ZONE, x0 = geom.sand0 + target;
+  const vol = new THREE.Mesh(new THREE.BoxGeometry(2 * hz, 2.2, D), zoneMat);
+  vol.position.set(x0, Y0 + 1.1, 0); vol.renderOrder = 2;
+  zone.add(vol);
+  // 砂の上の枠線と、前の角の柱
+  for (const dx of [-hz, hz]) {
+    const e = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.02, D), zoneEdgeMat); e.position.set(x0 + dx, Y0 + 0.012, 0); zone.add(e);
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.03, 2.2, 0.03), zoneEdgeMat); p.position.set(x0 + dx, Y0 + 1.1, D / 2); zone.add(p);
+  }
+  for (const dz of [-D / 2, D / 2]) {
+    const e = new THREE.Mesh(new THREE.BoxGeometry(2 * hz, 0.02, 0.035), zoneEdgeMat); e.position.set(x0, Y0 + 0.012, dz); zone.add(e);
+  }
+  const c = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.025, D), centerMat); c.position.set(x0, Y0 + 0.015, 0); zone.add(c);
+  // 奥に旗（目標の目印）
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.6, 10), poleMat); pole.position.set(x0, Y0 + 1.3, -D / 2 - 0.05); zone.add(pole);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.42), flagMat);
+  flag.position.set(x0 + 0.36, Y0 + 2.38, -D / 2 - 0.05); zone.add(flag);
+  pole.castShadow = flag.castShadow = true;
+}
+
+// ---------- 円柱（かたい：鋼の円柱 / やわらかい：つぶれるタイヤ） ----------
+const roller = new THREE.Group(); W.scene.add(roller);
+let rigidMesh = null, tire = null, hubDisc = null, spokes = null;
+// 端面の模様（回転が見えるように3本の帯）
+const capTex = tex.label((g, w, h) => {
+  const cx = w / 2, R = w / 2;
+  const gr = g.createRadialGradient(cx, cx, 0, cx, cx, R); gr.addColorStop(0, '#d9dde3'); gr.addColorStop(1, '#9aa1aa');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(0,0,0,.18)'; g.lineWidth = 1;
+  for (let r = 20; r < R; r += 7) { g.beginPath(); g.arc(cx, cx, r, 0, Math.PI * 2); g.stroke(); } // 旋盤の削り目
+  g.fillStyle = '#ff7a45';
+  for (let i = 0; i < 3; i++) {
+    g.save(); g.translate(cx, cx); g.rotate(i * Math.PI * 2 / 3);
+    g.fillRect(-14, 30, 28, R - 44); g.restore();
+  }
+  g.fillStyle = '#5b636e'; g.beginPath(); g.arc(cx, cx, 34, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#c9ced6'; g.beginPath(); g.arc(cx, cx, 18, 0, Math.PI * 2); g.fill();
+}, 512, 512);
+const capMat = new THREE.MeshStandardMaterial({ map: capTex, metalness: 0.85, roughness: 0.32 });
+const sideMat = M.steel({ color: 0xb8c0ca, roughness: 0.22 }), brassMat = M.brass();
+
+// やわらかいタイヤ：外周16個の玉の位置に合わせて、毎フレーム頂点を動かすドーナツ
+const TK = 64, TP = 14;
+function makeTireGeo() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TK * TP * 3), 3));
+  const idx = [];
+  for (let i = 0; i < TK; i++) for (let j = 0; j < TP; j++) {
+    const a = i * TP + j, b = ((i + 1) % TK) * TP + j, c = ((i + 1) % TK) * TP + (j + 1) % TP, d = i * TP + (j + 1) % TP;
+    idx.push(a, b, d, b, c, d);
+  }
+  g.setIndex(idx);
+  return g;
+}
+const sgnPow = (c, p) => Math.sign(c) * Math.pow(Math.abs(c), p);
+const _pts = Array.from({ length: 16 }, () => new THREE.Vector3());
+const _curve = new THREE.CatmullRomCurve3(_pts, true, 'centripetal');
+const _s = new THREE.Vector3();
+function updateTire(hub, rim, innerAbs, zh) {
+  const hp = hub.getPosition();
+  for (let j = 0; j < rim.length; j++) {
+    const p = rim[j].getPosition(), dx = p.x - hp.x, dy = p.y - hp.y, l = Math.hypot(dx, dy) || 1;
+    _pts[j].set(p.x + dx / l * 0.09, p.y + dy / l * 0.09, 0); // 玉の外側のふち
+  }
+  const pos = tire.geometry.attributes.position.array;
+  let k = 0;
+  for (let i = 0; i < TK; i++) {
+    _curve.getPoint(i / TK, _s);
+    const dx = _s.x - hp.x, dy = _s.y - hp.y, rho = Math.hypot(dx, dy) || 1, ux = dx / rho, uy = dy / rho;
+    const rin = Math.min(innerAbs, rho * 0.8), mid = (rho + rin) / 2, half = (rho - rin) / 2;
+    for (let j = 0; j < TP; j++) {
+      const ph = j / TP * Math.PI * 2;
+      const r = mid + half * sgnPow(Math.cos(ph), 0.5), z = zh * sgnPow(Math.sin(ph), 0.5);
+      pos[k++] = hp.x + ux * r; pos[k++] = hp.y + uy * r + Y0; pos[k++] = z;
+    }
+  }
+  tire.geometry.attributes.position.needsUpdate = true;
+  tire.geometry.computeVertexNormals();
+}
+
+function buildRoller(kappa) {
+  disposeGroup(roller); rigidMesh = tire = hubDisc = spokes = null;
+  const A = C2.A;
+  if (kappa >= 1) {
+    const g = new THREE.Group();
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(A, A, CYL, 64, 1), [sideMat, capMat, capMat]);
+    cyl.rotation.x = Math.PI / 2;
+    g.add(cyl);
+    rigidMesh = g; roller.add(g);
+  } else {
+    // κ=0.35 はゴムタイヤ＋鋼のホイール、κ=0.08 は半透明のゼリー
+    const jelly = kappa < 0.2;
+    const col = kappaColor(kappa).getHex();
+    const mat = jelly ? M.jelly(col, { thickness: 0.8, attenuationDistance: 0.5 }) : M.rubber(0x4a2c20, { roughness: 0.72, metalness: 0 }); // 少し赤みのある黒いゴム
+    mat.userData.own = true;
+    tire = new THREE.Mesh(makeTireGeo(), mat);
+    tire.frustumCulled = false;
+    roller.add(tire);
+    // 中心（ホイール or 芯）
+    const hr = jelly ? 0.12 : 0.26;
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(hr, hr, CYL * (jelly ? 0.7 : 0.62), 32), jelly ? brassMat : [sideMat, capMat, capMat]);
+    disc.rotation.x = Math.PI / 2;
+    hubDisc = new THREE.Group(); hubDisc.add(disc); roller.add(hubDisc);
+    // ばね（中心と外周の玉をつなぐ線）を細い線で見せる
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 2 * 2 * 3), 3));
+    spokes = new THREE.LineSegments(sg, ownMat(new THREE.LineBasicMaterial({ color: jelly ? 0xffd2b0 : 0xffb08a, transparent: true, opacity: jelly ? 0.75 : 0.5 })));
+    spokes.frustumCulled = false;
+    roller.add(spokes);
+  }
+  W.shadow(roller);
+}
+
+// ---------- 停止マーカー ----------
+const stopMark = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.36, 20), goldMat);
+stopMark.rotation.x = Math.PI; stopMark.visible = false; W.scene.add(stopMark);
+
+// ---------- HTML ラベル ----------
+function mkLabel(cls) { const d = document.createElement('div'); d.className = 'l3 ' + (cls || ''); lbl.appendChild(d); return d; }
+const lbAlpha = mkLabel('gold'), lbTarget = mkLabel('green'), lbStop = mkLabel('gold');
+const rulerLb = [];
+for (let i = 0; i <= 8; i++) rulerLb.push(mkLabel('tick'));
+const _v = new THREE.Vector3();
+function place(el, x, y, z, text) {
+  const r = stage.getBoundingClientRect();
+  const s = W.toScreen(_v.set(x, y, z));
+  if (s.behind) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.style.transform = `translate(${(s.x - r.left).toFixed(1)}px, ${(s.y - r.top).toFixed(1)}px) translate(-50%, -50%)`;
+  if (text != null && el._t !== text) { el.textContent = text; el._t = text; }
+}
+
+// ---------- 自動フレーミング（コース全体が入る距離を計算） ----------
+const camGoal = new THREE.Vector3(), tgtGoal = new THREE.Vector3();
+function frameFor(geom) {
+  const x0 = -1.2, x1 = geom.xEnd + 0.6, y0 = -1.1 + Y0, y1 = Math.max(geom.H + 1.2, 3) + Y0;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const vf = THREE.MathUtils.degToRad(W.camera.fov) / 2, asp = W.camera.aspect;
+  const dist = Math.max(((y1 - y0) / 2) * 1.15 / Math.tan(vf), ((x1 - x0) / 2) * 1.02 / (Math.tan(vf) * asp)) + D / 2;
+  tgtGoal.set(cx, cy - 0.3, 0);
+  camGoal.set(cx, cy + dist * 0.12, dist);
+}
+let snap = true; // 最初の1回は補間せずに置く
+
+// ---------- 毎フレーム ----------
+let lastGeom = null, lastKappa = null, zoneKey = null;
+W.onFrame((dt) => {
+  const geom = C2.geom; if (!geom) return;
+  if (geom !== lastGeom) { buildCourse(geom); lastGeom = geom; zoneKey = null; }
+  const kappa = C2.kappa;
+  if (kappa !== lastKappa) { buildRoller(kappa); lastKappa = kappa; autoFrame = true; }
+  const zk = geom.sand0 + ':' + C2.target;
+  if (zk !== zoneKey) { buildZone(geom, C2.target); zoneKey = zk; }
+  if (autoFrame) {
+    frameFor(geom);
+    const k = snap ? 1 : 1 - Math.exp(-dt * 5); snap = false;
+    W.camera.position.lerp(camGoal, k); ctl.target.lerp(tgtGoal, k);
+  }
+  // 円柱
+  const hub = C2.hub;
+  if (rigidMesh) {
+    const p = hub.getPosition();
+    rigidMesh.position.set(p.x, p.y + Y0, 0); rigidMesh.rotation.set(0, 0, hub.getAngle());
+  } else if (tire && hub.rim) {
+    updateTire(hub, hub.rim, kappa < 0.2 ? 0.14 : 0.27, CYL / 2);
+    const hp = hub.getPosition(), p0 = hub.rim[0].getPosition();
+    hubDisc.position.set(hp.x, hp.y + Y0, 0);
+    hubDisc.rotation.set(0, 0, Math.atan2(p0.y - hp.y, p0.x - hp.x)); // 外周の玉0番の向きでホイールを回す
+    const sp = spokes.geometry.attributes.position.array; let k = 0;
+    for (const zz of [CYL * 0.36, -CYL * 0.36]) for (const b of hub.rim) {
+      const p = b.getPosition();
+      sp[k++] = hp.x; sp[k++] = hp.y + Y0; sp[k++] = zz; sp[k++] = p.x; sp[k++] = p.y + Y0; sp[k++] = zz;
+    }
+    spokes.geometry.attributes.position.needsUpdate = true;
+  }
+  // 停止マーカー
+  const st = C2.stop;
+  if (st != null) {
+    stopMark.visible = true;
+    stopMark.position.set(geom.sand0 + st, Y0 + 1.35 + Math.sin(performance.now() / 300) * 0.05, D / 2);
+    place(lbStop, geom.sand0 + st, Y0 + 1.8, D / 2, `停止 ${st.toFixed(2)} m`);
+  } else { stopMark.visible = false; lbStop.style.display = 'none'; }
+  // ラベル
+  place(lbAlpha, geom.X0 - 1.5, Y0 + 0.3, D / 2, `α=${C2.alpha.toFixed(1)}°`);
+  place(lbTarget, geom.sand0 + C2.target, Y0 + 2.75, 0, `目標 ${C2.target.toFixed(1)} m`);
+  for (let i = 0; i < rulerLb.length; i++) place(rulerLb[i], geom.sand0 + i * 2, Y0 - 0.88, D / 2, (i * 2) + 'm');
+  const ht = `試行 ${C2.attempts}  ／  目標：砂地から ${C2.target.toFixed(1)} m ± ${C2.HALF_ZONE} m`;
+  if (hud._t !== ht) { hud.textContent = ht; hud._t = ht; }
+});
+window.C2R = W; // テスト用
 </script>
 </body>
 </html>

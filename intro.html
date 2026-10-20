@@ -21,9 +21,9 @@
   }
   /* 立体イラストの舞台。字幕・見出しと重ならないよう、空いている領域だけを使う */
   #stage { position: fixed; left: 0; right: 0; top: 70px; height: 60vh; }
-  #zc { display: block; cursor: grab; touch-action: none; }
+  #stage canvas { cursor: grab; touch-action: none; }
   #capMeasure { position: fixed; left: -9999px; top: 0; visibility: hidden; pointer-events: none; }
-  #zc:active { cursor: grabbing; }
+  #stage canvas:active { cursor: grabbing; }
 
   /* 表紙 */
   #title {
@@ -166,7 +166,7 @@
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="zc" aria-label="オープニングの立体イラスト"></canvas></div>
+<div id="stage" aria-label="オープニングの3Dシーン"></div>
 
 <div id="title">
   <div class="kicker">RIGID VANISH</div>
@@ -210,639 +210,679 @@
 <a id="skip" href="index.html?hub" data-done>スキップ →</a>
 <div id="drag">ドラッグで回せます</div>
 
-<script src="https://cdn.jsdelivr.net/npm/zdog@1.1.3/dist/zdog.dist.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
 <script src="shared/common.js"></script>
-<script>
-(function () {
-  'use strict';
-  const TAU = Zdog.TAU;
-  const C = {
-    rigid: '#5cc8ff', rigidL: '#a8e2ff', accent: '#ff7a45', accentL: '#ffa07a', warn: '#ffd166',
-    paper: '#f4ecd9', paperD: '#e3d6ba', ink: '#b3a68b', cover: '#2b5277', coverD: '#1d3a57',
-    skin: '#f3d2b4', hair: '#3a2c26', coat: '#ff7a45', pants: '#2b3e55', floor: '#16202b',
-    stone: '#a3acb7', stoneL: '#c3cad2', stoneD: '#7f8893', jelly: '#ff9a6b', jellyL: '#ffbb98', jellyD: '#e3754a'
-  };
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import { createWorld, M, tex, THREE, roundedBox, loadGLTF, ASSET } from './shared/real3d.js';
 
-  // ---------- 色ユーティリティ ----------
-  const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-  const mix = (a, b, t) => {
-    const A = hex2rgb(a), B = hex2rgb(b);
-    return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('');
-  };
-  const withA = (h, a) => {
-    if (a >= 0.995) return h;
-    const [r, g, b] = hex2rgb(h);
-    return `rgba(${r},${g},${b},${Math.max(0, a).toFixed(3)})`;
-  };
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+// メッシュを置く位置を指定して返す
+const at = (m, x = 0, y = 0, z = 0) => { m.position.set(x, y, z); return m; };
+const noise = (i, t) => Math.sin(t * 1.3 + i * 1.7) + 0.5 * Math.sin(t * 2.3 + i * 3.1);
 
-  // ---------- Zdog 世界 ----------
-  const illo = new Zdog.Illustration({ element: '#zc', dragRotate: true, rotate: { x: -0.18 } });
+// ---------- 字幕の文章（場面ごと） ----------
+const TEXT = {
+  1: [{ t: 'ある朝、物理学の教科書から', pause: 1500 }, { em: '一行' }, { t: 'が消えた。' }],
+  2: [{ em: '「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」' }, { t: '──剛体の定義である。' }, { br: true },
+      { note: '（ふつうの言葉にすると「どの2点の間の長さも、ずっと変わらない物」）', pause: 400 }],
+  3: [{ t: 'それ以来、' }, { t: '押した力は一瞬では伝わらなくなり、' }, { t: 'ボールはうまく転がらず、' }, { t: 'こまは回しすぎると裂け、' }, { t: '振り子では重力の強さも測れなくなった。' }],
+  4: [{ t: 'あなたは', pause: 300 }, { em: '最後の観測者' }, { t: 'として、くずれていく世界を確かめにいく。' }],
+  5: [{ b: 'ひとことで　' }, { t: 'どれだけ押しても引いても、' }, { b: '形が少しも変わらない物' }, { t: 'のこと。物理の教科書は、石やボールをこの「理想のかたい物」として考えます。' }],
+  6: [{ b: '本当は？　' }, { t: '現実の物はほんの少しだけ縮んだり曲がったりします。このゲームでは、その「少し」を大きくしていったら世界がどう変わるかを体験します。' }],
+  7: [{ t: 'このゲームでの「かたさ」の目盛り。' }, { k: '1 = 完全にかたい' }, { t: '、0 に近いほどやわらかい。' }]
+};
 
-  // グループ（場面ごとの登場物）。透明度 _a と拡大率で出し入れする。
-  const groups = [];
-  function group(opts = {}) {
-    const g = new Zdog.Anchor(Object.assign({ scale: 0.01 }, opts));
-    g._a = 0; g._on = false;
-    groups.push(g);
-    return g;
+// ---------- レイアウト：いちばん長い字幕の高さを測り、その上だけを 3D の舞台にする ----------
+const stage = $('stage'), cap = $('cap'), capText = $('capText');
+function segsHTML(segs) {
+  return segs.map(g => g.br ? '<br>' : g.em ? `<em>${g.em}</em>` : g.b ? `<b>${g.b}</b>`
+    : g.k ? `<span class="k">${g.k}</span>` : g.note ? `<span class="note">${g.note}</span>` : g.t).join('');
+}
+function layout() {
+  const m = document.createElement('div');
+  m.id = 'capMeasure'; m.style.width = cap.getBoundingClientRect().width + 'px';
+  m.style.padding = getComputedStyle(cap).padding;
+  const tx = document.createElement('div'); tx.id = 'capText'; tx.style.cssText = 'min-height:0';
+  m.appendChild(tx); document.body.appendChild(m);
+  let maxH = 0;
+  Object.values(TEXT).forEach(s => { tx.innerHTML = segsHTML(s); maxH = Math.max(maxH, m.offsetHeight); });
+  m.remove();
+  // 3D は画面いっぱいに描き、カメラの中心だけを「見出しと字幕のあいだ」へずらす（重なり防止）
+  const top = innerWidth < 720 ? 150 : 70;
+  const bottom = parseFloat(getComputedStyle(cap).bottom) + maxH + 12;
+  stage.style.top = '0px'; stage.style.height = innerHeight + 'px';
+  FOCUS.free = { y: (top + innerHeight - bottom) / 2, h: innerHeight - top - bottom };
+}
+const FOCUS = { free: { y: 0, h: 1 }, y: 0, scale: 1 };
+addEventListener('resize', layout);
+layout();
+FOCUS.y = FOCUS.free.y;
+
+// ---------- 世界：夜の書斎の机 ----------
+const W = await createWorld(stage, {
+  camera: [2.6, 3.2, 4.2], target: [0.4, 0.2, 0], groundSize: 40, bloom: 0.45, exposure: 0.95,
+  background: 0x0c0a09, shadowBox: 6, sun: [3, 8, 5],
+  groundMat: new THREE.MeshStandardMaterial({ map: tex.wood('#5c3b22', '#2a170a', 13, [12, 12]), roughness: 0.5 })
+});
+const { scene, camera, controls } = W;
+// 画面上の「注目点」の高さ FOCUS.y に、カメラの注視点が来るように投影をずらす
+let lastVO = '';
+function applyFocus() {
+  const w = innerWidth, h = innerHeight, dy = h / 2 - FOCUS.y;
+  const key = w + 'x' + h + ':' + dy.toFixed(1);
+  if (key === lastVO) return;
+  lastVO = key;
+  camera.setViewOffset(w, h, 0, dy, w, h);
+}
+W.sun.intensity = 0.9; W.sun.color.set(0xffe0c0);
+W.bloom.threshold = 1.5; W.bloom.strength = 0.55;   // にじむのは電球・炎・光の粒だけ
+gsap.ticker.lagSmoothing(0);                      // 重いフレームがあっても演出の時間は実時間どおりに進める
+W.rim.intensity = 0.6;
+controls.enablePan = false; controls.minDistance = 2.2; controls.maxDistance = 14;
+
+// 電気スタンド（スポットライトで机を照らす）
+const lamp = new THREE.Group();
+const darkMetal = M.steel({ color: 0x2b2f33, roughness: 0.35 });
+lamp.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.48, 0.08, 48), darkMetal), 0, 0.04, 0));
+const arm1 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 2.0, 16), darkMetal);
+arm1.position.set(0.25, 1.0, 0); arm1.rotation.z = -0.25; lamp.add(arm1);
+const arm2 = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 16), darkMetal);
+arm2.position.set(0.95, 2.1, 0); arm2.rotation.z = -1.25; lamp.add(arm2);
+const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.5, 0.55, 48, 1, true), M.paint(0x1d4a38, { side: THREE.DoubleSide, roughness: 0.4 }));
+shade.position.set(1.62, 2.12, 0); shade.rotation.z = 0.55; lamp.add(shade);
+const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 16), M.glow(0xfff0c8, 2.2));
+bulb.position.set(1.66, 1.98, 0); lamp.add(bulb);
+const spot = new THREE.SpotLight(0xffdcae, 9, 16, 0.85, 0.6, 1.6);
+spot.position.copy(bulb.position); spot.castShadow = true; spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -0.0005;
+lamp.add(spot);
+lamp.position.set(-3.3, 0, 0.2); lamp.rotation.y = -0.15;
+W.add(lamp);
+spot.target.position.set(0.2, 0, 0.3); scene.add(spot.target);
+// 机の奥に積んだ本（雰囲気づくり）
+[[0x6b2b2b, 0], [0x24435f, 0.18], [0x3f5a32, 0.34]].forEach(([c, y], i) => {
+  const b = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.17, 1.0), M.cloth(c, { side: THREE.FrontSide }));
+  b.position.set(3.6, 0.085 + y, -2.6); b.rotation.y = 0.2 + i * 0.12; W.add(b);
+});
+
+// ---------- 場面ごとの登場物（拡大縮小で出し入れ） ----------
+const groups = [];
+function group() { const g = new THREE.Group(); g.scale.setScalar(0.001); g.visible = false; scene.add(g); groups.push(g); return g; }
+function show(g, on, dur = 0.8) {
+  gsap.killTweensOf(g.scale);
+  if (on) {
+    g.visible = true;
+    gsap.to(g.scale, { x: 1, y: 1, z: 1, duration: dur, ease: 'back.out(1.5)' });
+  } else if (g.visible) {
+    gsap.to(g.scale, { x: 0.001, y: 0.001, z: 0.001, duration: dur * 0.5, ease: 'power2.in', onComplete() { g.visible = false; } });
   }
-  function show(g, on, dur = 0.8) {
-    gsap.killTweensOf(g); gsap.killTweensOf(g.scale);
-    if (on) {
-      if (!g._on) { illo.addChild(g); g._on = true; }
-      gsap.to(g, { _a: 1, duration: dur * 0.7 });
-      gsap.to(g.scale, { x: 1, y: 1, z: 1, duration: dur, ease: 'back.out(1.6)' });
-    } else if (g._on) {
-      gsap.to(g, { _a: 0, duration: dur * 0.5 });
-      gsap.to(g.scale, {
-        x: 0.6, y: 0.6, z: 0.6, duration: dur * 0.5, ease: 'power2.in',
-        onComplete() { illo.removeChild(g); g._on = false; }
-      });
+}
+
+// ---------- 教科書 ----------
+const book = group();
+const PW = 1.45, PD = 1.95, CT = 0.04, PT = 0.14;   // ページの幅・奥行き、表紙と紙束の厚さ
+const coverMat = new THREE.MeshPhysicalMaterial({ color: 0x1f3d5c, roughness: 0.55, sheen: 0.5, sheenColor: new THREE.Color(0x6f9fd0), clearcoat: 0.3 });
+const edgeTex = tex.label((g, w, h) => { g.fillStyle = '#efe5cf'; g.fillRect(0, 0, w, h); g.fillStyle = 'rgba(120,100,70,.25)'; for (let y = 0; y < h; y += 3) g.fillRect(0, y, w, 1); }, 64, 256);
+const edgeMat = new THREE.MeshStandardMaterial({ map: edgeTex, roughness: 0.95 });
+const SERIF = '"Yu Mincho","Hiragino Mincho ProN","Noto Serif JP",serif';
+function drawPage(g, w, h, side, vanish) {
+  g.fillStyle = '#f3ead6'; g.fillRect(0, 0, w, h);
+  const gr = g.createLinearGradient(side === 'R' ? 0 : w, 0, side === 'R' ? 80 : w - 80, 0);
+  gr.addColorStop(0, 'rgba(90,70,40,.25)'); gr.addColorStop(1, 'rgba(90,70,40,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#17120c'; g.textBaseline = 'top';
+  if (side === 'L') {
+    g.font = `bold 60px ${SERIF}`; g.fillText('第3章　剛体', 60, 60);
+    g.font = `34px ${SERIF}`;
+    ['3.1　剛体とは', '力を加えても形が', '変わらない物体を考える。', '3.2　自由度', '3点 P, Q, R を決めれば', '剛体の位置は定まる。']
+      .forEach((s, i) => g.fillText(s, 60, 160 + i * 56));
+    g.strokeStyle = '#2b2620'; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(200, 620); g.lineTo(480, 560); g.lineTo(380, 820); g.closePath(); g.stroke();
+    g.font = `italic 28px ${SERIF}`; g.fillText('P', 168, 610); g.fillText('Q', 490, 540); g.fillText('R', 370, 830);
+    g.font = `22px ${SERIF}`; g.fillText('図 3-4', 300, 900);
+  } else {
+    g.font = `34px ${SERIF}`;
+    const lines = ['質点の集まりを質点系と', 'いう。とくに、', '', '', 'ものを剛体という。', '剛体の運動は、重心の', '並進と回転に分けられる。', '慣性モーメント', 'I = Σ m r²'];
+    lines.forEach((s, i) => s && g.fillText(s, 60, 80 + i * 56));
+    if (vanish < 1) {
+      g.globalAlpha = 1 - vanish;
+      g.fillStyle = 'rgba(255,140,80,.35)'; g.fillRect(50, 186, w - 100, 108);
+      g.fillStyle = '#8a2a0c'; g.font = `bold 34px ${SERIF}`;
+      g.fillText('2質点間の距離が運動を', 60, 192); g.fillText('通して一定である', 60, 248);
+      g.globalAlpha = 1;
     }
+    g.font = `22px ${SERIF}`; g.fillStyle = '#6b6152'; g.fillText('— 37 —', w / 2 - 40, h - 70);
   }
-  // 子孫すべての色に、グループの透明度と個別の透明度 _ca を掛ける
-  function paint(node, a) {
-    (node.children || []).forEach(s => {
-      if (s.color !== undefined && typeof s.color === 'string') {
-        if (s._c === undefined) s._c = s.color.startsWith('#') ? s.color : null;
-        if (s._c) s.color = withA(s._c, a * (s._ca === undefined ? 1 : s._ca));
+}
+const pageL = tex.label((g, w, h) => drawPage(g, w, h, 'L', 0), 768, 1024);
+const pageR = tex.label((g, w, h) => drawPage(g, w, h, 'R', 0), 768, 1024);
+const coverTex = tex.label((g, w, h) => {
+  g.fillStyle = '#1f3d5c'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#d8b25a'; g.lineWidth = 6; g.strokeRect(40, 40, w - 80, h - 80);
+  g.fillStyle = '#e6c46a'; g.textAlign = 'center';
+  g.font = `bold 92px ${SERIF}`; g.fillText('力学 A', w / 2, 330);
+  g.font = `48px ${SERIF}`; g.fillText('第3章　剛体', w / 2, 430);
+  g.font = `28px ${SERIF}`; g.fillText('RIGID BODY', w / 2, 860);
+}, 768, 1024);
+coverTex.center.set(0.5, 0.5); coverTex.rotation = Math.PI;   // 閉じたとき上を向く面に合わせて向きを直す
+const pagesMat = map => new THREE.MeshStandardMaterial({ map, color: 0xe2d9c6, roughness: 0.95 });
+// 右半分（机に置かれたまま）
+const rCover = new THREE.Mesh(new THREE.BoxGeometry(PW + 0.1, CT, PD + 0.1), coverMat);
+rCover.position.set(PW / 2 + 0.03, CT / 2, 0); book.add(rCover);
+const rPages = new THREE.Mesh(new THREE.BoxGeometry(PW, PT, PD), [edgeMat, edgeMat, pagesMat(pageR), edgeMat, edgeMat, edgeMat]);
+rPages.position.set(PW / 2, CT + PT / 2, 0); book.add(rPages);
+// 左半分（背を軸に開く）。φ = -π で閉じ、0 で開く
+const hinge = new THREE.Group(); hinge.position.y = CT + PT; book.add(hinge);
+const lPages = new THREE.Mesh(new THREE.BoxGeometry(PW, PT, PD), [edgeMat, edgeMat, pagesMat(pageL), edgeMat, edgeMat, edgeMat]);
+lPages.position.set(-PW / 2, -PT / 2, 0); hinge.add(lPages);
+const lCover = new THREE.Mesh(new THREE.BoxGeometry(PW + 0.1, CT, PD + 0.1),
+  [coverMat, coverMat, coverMat, new THREE.MeshPhysicalMaterial({ map: coverTex, roughness: 0.5, clearcoat: 0.3 }), coverMat, coverMat]);
+lCover.position.set(-PW / 2 - 0.03, -PT - CT / 2, 0); hinge.add(lCover);
+const spine = new THREE.Mesh(new THREE.CylinderGeometry(CT + PT / 2 + 0.02, CT + PT / 2 + 0.02, PD + 0.1, 24, 1, false, 0, Math.PI), coverMat);
+spine.rotation.x = Math.PI / 2; spine.rotation.y = Math.PI / 2; spine.position.y = (CT + PT) / 2; book.add(spine);
+hinge.rotation.z = -Math.PI;
+W.shadow(book);
+
+// 消える一行：光の粒になって舞い上がる
+const MOTES = 70;
+const motes = new THREE.InstancedMesh(new THREE.SphereGeometry(0.018, 8, 6), M.glow(0xffa060, 5), MOTES);
+motes.frustumCulled = false; book.add(motes);
+const moteHome = [], moteVel = [];
+for (let i = 0; i < MOTES; i++) {
+  const row = i % 2;
+  moteHome.push(new THREE.Vector3(PW / 2 - 0.62 + (1.15 * (i >> 1)) / (MOTES / 2), CT + PT + 0.01, -PD / 2 + PD * (210 + row * 56) / 1024));
+  moteVel.push(new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.5 + Math.random() * 0.9, (Math.random() - 0.5) * 0.4));
+}
+const bookState = { dissolve: -1, vanish: 0 };
+const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
+function updateMotes(t) {
+  for (let i = 0; i < MOTES; i++) {
+    let sc = 0;
+    _p.copy(moteHome[i]);
+    if (bookState.dissolve >= 0) {
+      const k = Math.max(0, t - bookState.dissolve - (i / MOTES) * 0.8);
+      if (k > 0) {
+        sc = Math.max(0, 1 - k / 3);
+        _p.addScaledVector(moteVel[i], k);
+        _p.x += 0.08 * Math.sin(k * 3 + i);
       }
-      paint(s, a);
-    });
+    }
+    motes.setMatrixAt(i, _m4.compose(_p, _q, _s.setScalar(sc)));
   }
-  const line = (addTo, pts, stroke, color, extra) =>
-    new Zdog.Shape(Object.assign({ addTo, path: pts, stroke, color, closed: false }, extra || {}));
-  const dot = (addTo, p, stroke, color, extra) =>
-    new Zdog.Shape(Object.assign({ addTo, translate: p, stroke, color }, extra || {}));
-  const floorDisk = (addTo, y, d) => new Zdog.Ellipse({
-    addTo, diameter: d, translate: { y }, rotate: { x: TAU / 4 }, stroke: 0, fill: true, color: C.floor
+  motes.instanceMatrix.needsUpdate = true;
+  // ページの文字も同時に薄れていく
+  const v = bookState.dissolve < 0 ? 0 : clamp((t - bookState.dissolve) * 0.9, 0, 1);
+  if (Math.abs(v - bookState.vanish) > 0.02 || (v === 1 && bookState.vanish !== 1)) {
+    bookState.vanish = v;
+    drawPage(pageR.image.getContext('2d'), 768, 1024, 'R', v);
+    pageR.needsUpdate = true;
+  }
+}
+
+// ---------- 剛体：6つの金属球をすべて棒で結んだ立体 ----------
+const struct = group();
+struct.position.set(0.1, 1.9, 0);
+const sSpin = new THREE.Group(); struct.add(sSpin);
+const R = 0.85;
+const SN = [[0, R, 0], [0, -R, 0], [R, 0, 0], [-R, 0, 0], [0, 0, R], [0, 0, -R]].map(p => new THREE.Vector3(...p));
+const nodeMat = new THREE.MeshPhysicalMaterial({ color: 0xdfe6ee, metalness: 1, roughness: 0.12, clearcoat: 0.6 });
+const rodMat = new THREE.MeshPhysicalMaterial({ color: 0xb9c3cf, metalness: 1, roughness: 0.25 });
+const sNodes = SN.map(p => { const m = new THREE.Mesh(new THREE.SphereGeometry(0.11, 32, 20), nodeMat); m.position.copy(p); sSpin.add(m); return m; });
+const sRods = [];
+for (let i = 0; i < SN.length; i++) for (let j = i + 1; j < SN.length; j++) {
+  const m = new THREE.Mesh(new THREE.BufferGeometry(), rodMat);
+  m.userData = { i, j, w: new THREE.Vector3(Math.sin(i * 7 + j), Math.cos(i * 3 + j * 5), Math.sin(i + j * 2)).normalize() };
+  sSpin.add(m); sRods.push(m);
+}
+const K = { v: 1 };          // 世界のかたさ κ
+const C_STEEL = new THREE.Color(0xdfe6ee), C_SOFT = new THREE.Color(0xff7a45), C_ROD = new THREE.Color(0xb9c3cf), C_SOFTR = new THREE.Color(0xffa070);
+function tube(mesh, pts, r, seg = 10) {
+  mesh.geometry.dispose();
+  mesh.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), seg, r, 8);
+}
+// 棒の形は κ が変わったときだけ作り直す（かたい間は形が一定 = 剛体）
+let sLastS = -1;
+function updateStruct(t) {
+  const s = 1 - K.v;
+  nodeMat.color.copy(C_STEEL).lerp(C_SOFT, ease(s * 1.4)); nodeMat.metalness = 1 - ease(s * 1.4) * 0.9; nodeMat.roughness = 0.12 + s * 0.25;
+  rodMat.color.copy(C_ROD).lerp(C_SOFTR, ease(s * 1.4)); rodMat.metalness = nodeMat.metalness;
+  if (s < 0.002 && sLastS === 0) return;
+  sLastS = s < 0.002 ? 0 : s;
+  const P = SN.map((p, i) => new THREE.Vector3(
+    p.x + s * 0.34 * noise(i, t), p.y + s * 0.34 * noise(i + 10, t * 1.1) - s * s * 0.35, p.z + s * 0.34 * noise(i + 20, t * 0.9)));
+  sNodes.forEach((n, i) => n.position.copy(P[i]));
+  sRods.forEach((r, k) => {
+    const { i, j, w } = r.userData, a = P[i], b = P[j], pts = [];
+    for (let q = 0; q <= 6; q++) {
+      const u = q / 6, amp = s * 0.13 * Math.sin(Math.PI * u) * Math.sin(t * 3 + k);
+      pts.push(new THREE.Vector3().lerpVectors(a, b, u).addScaledVector(w, amp));
+    }
+    tube(r, pts, 0.03 - s * 0.008);
   });
+}
 
-  // ---------- 教科書 ----------
-  const book = group({ translate: { y: 10 } });
-  const bookTilt = new Zdog.Anchor({ addTo: book, rotate: { x: -0.35 } });
-  // Zdog は図形を奥行きで並べ替えるので、ページと表紙は Group にまとめて描く順番を固定する
-  line(bookTilt, [{ y: -104 }, { y: 104 }], 10, C.coverD);
-  new Zdog.Rect({ addTo: bookTilt, width: 158, height: 212, translate: { x: 80, z: -3 }, stroke: 6, fill: true, color: C.cover });
-  const rightPage = new Zdog.Group({ addTo: bookTilt, translate: { x: 80 } });
-  new Zdog.Rect({ addTo: rightPage, width: 150, height: 202, stroke: 3, fill: true, color: C.paper });
-  const hinge = new Zdog.Anchor({ addTo: bookTilt, rotate: { y: Math.PI } });
-  const leftCover = new Zdog.Group({ addTo: hinge, translate: { x: -80, z: -3 } });
-  new Zdog.Rect({ addTo: leftCover, width: 158, height: 212, stroke: 6, fill: true, color: C.cover });
-  const coverDeco = [
-    new Zdog.Rect({ addTo: leftCover, width: 100, height: 14, translate: { y: -40, z: -2 }, stroke: 2, fill: true, color: C.warn }),
-    new Zdog.Rect({ addTo: leftCover, width: 70, height: 6, translate: { y: -16, z: -2 }, stroke: 2, fill: true, color: C.rigidL })
-  ];
-  const leftPage = new Zdog.Group({ addTo: hinge, translate: { x: -80 } });
-  new Zdog.Rect({ addTo: leftPage, width: 150, height: 202, stroke: 3, fill: true, color: C.paper });
-  function pageLines(page, skip) {
-    const out = [];
-    for (let i = 0; i < 10; i++) {
-      const y = -78 + i * 17.5;
-      const w = i === 0 ? 70 : 92 + ((i * 37) % 26);
-      if (i === skip) continue;
-      out.push(line(page, [{ x: -w / 2, y, z: 1.5 }, { x: w / 2, y, z: 1.5 }], i === 0 ? 6 : 3.5, i === 0 ? C.coverD : C.ink));
-    }
-    return out;
-  }
-  const pageInk = pageLines(leftPage, -1).concat(pageLines(rightPage, 4));
-  const LINE_Y = -78 + 4 * 17.5;
-  const vanishLine = line(rightPage, [{ x: -56, y: LINE_Y, z: 2 }, { x: 56, y: LINE_Y, z: 2 }], 6, C.accent);
-  const motes = [];
-  for (let i = 0; i < 46; i++) {
-    const m = dot(rightPage, { x: -56 + (112 * i) / 45, y: LINE_Y, z: 2 }, 3 + (i % 3) * 1.5, i % 4 ? C.accent : C.warn);
-    m._ca = 0; m._home = { x: m.translate.x, y: LINE_Y, z: 2 };
-    m._v = { x: (Math.random() - 0.5) * 40, y: -30 - Math.random() * 70, z: 20 + Math.random() * 70 };
-    motes.push(m);
-  }
-  const bookState = { dissolve: -1 }; // 消え始めた時刻（-1 = まだ）
+// ---------- くずれていく世界の4つの場面 ----------
+const woodMat = M.wood({ base: '#c49060', dark: '#7a4a24', seed: 4 });
+// ① 押してもすぐ届かない木のブロック列
+const gBlocks = group(); gBlocks.position.set(-2.7, 0, 1.3);
+const blockGeo = await roundedBox(0.3, 0.3, 0.3, 0.035);
+const blocks = [0, 1, 2, 3, 4].map(i => { const m = new THREE.Mesh(blockGeo, woodMat.clone()); m.position.set(-0.6 + i * 0.32, 0.15, 0); gBlocks.add(m); return m; });
+const pusher = new THREE.Group(); gBlocks.add(pusher);
+const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.8, 16), M.steel()); rod.rotation.z = Math.PI / 2; rod.position.set(-1.25, 0.15, 0); pusher.add(rod);
+const plate = new THREE.Mesh(await roundedBox(0.05, 0.26, 0.26, 0.015), M.steel()); plate.position.set(-0.83, 0.15, 0); pusher.add(plate);
+// ② 坂を転がれないボール
+const gBall = group(); gBall.position.set(2.6, 0, 1.3);
+const SLOPE = 0.32;
+const board = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.05, 0.55), woodMat); board.rotation.z = -SLOPE; board.position.set(0, 0.36, 0); gBall.add(board);
+const prop = new THREE.Mesh(blockGeo, woodMat); prop.scale.set(0.8, 2.2, 1.6); prop.position.set(-0.86, 0.33, 0); gBall.add(prop);
+const ballTex = tex.label((g, w, h) => { g.fillStyle = '#ff7a45'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff3e6'; g.fillRect(0, h * 0.44, w, h * 0.12); }, 256, 128);
+const ball = new THREE.Mesh(new THREE.SphereGeometry(0.17, 40, 28), M.plastic(0xffffff, { map: ballTex, clearcoat: 0.8 }));
+gBall.add(ball);
+// ③ 回しすぎて裂ける木のこま
+const gTop = group(); gTop.position.set(-2.4, 0, -1.0);
+const topProfile = [[0, 0], [0.02, 0.02], [0.12, 0.12], [0.3, 0.22], [0.36, 0.28], [0.33, 0.33], [0.06, 0.36], [0.04, 0.56], [0, 0.58]].map(p => new THREE.Vector2(p[0], p[1]));
+const topTilt = new THREE.Group(); topTilt.position.y = 0.01; gTop.add(topTilt);
+const topMesh = new THREE.Mesh(new THREE.LatheGeometry(topProfile, 48), M.wood({ base: '#d9a05a', dark: '#8a4d1c', seed: 9 }));
+topTilt.add(topMesh);
+const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.018, 12, 48), M.paint(0xc8402a)); ring.rotation.x = Math.PI / 2; ring.position.y = 0.28; topMesh.add(ring);
+const CHIPS = 10;
+const chips = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.03, 0.04), M.wood({ base: '#d9a05a', dark: '#8a4d1c', seed: 9 }), CHIPS);
+chips.castShadow = true; gTop.add(chips);
+// ④ 糸が伸びてしまう振り子
+const gPend = group(); gPend.position.set(2.5, 0, -1.0);
+const stand = new THREE.Group(); gPend.add(stand);
+stand.add(at(new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.45), darkMetal), -0.3, 0.03, 0));
+stand.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 16), M.steel()), -0.55, 0.8, 0));
+const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.7, 16), M.steel()); beam.rotation.z = Math.PI / 2; beam.position.set(-0.22, 1.58, 0); stand.add(beam);
+const PIV = new THREE.Vector3(0.1, 1.58, 0);
+const string = new THREE.Mesh(new THREE.BufferGeometry(), M.rubber(0xe8e2d4)); gPend.add(string);
+const bob = new THREE.Mesh(new THREE.SphereGeometry(0.13, 32, 20), M.brass()); gPend.add(bob);
+const items = [gBlocks, gBall, gTop, gPend];
 
-  // ---------- 剛体（6つの点をすべて棒で結んだ立体） ----------
-  const tetra = group();
-  const tSpin = new Zdog.Anchor({ addTo: tetra });
-  const TN = [[0, -110, 0], [0, 110, 0], [105, 0, 0], [-105, 0, 0], [0, 0, 105], [0, 0, -105]].map(p => ({ x: p[0], y: p[1], z: p[2] }));
-  const tNodes = TN.map(p => dot(tSpin, { x: p.x, y: p.y, z: p.z }, 22, C.rigid));
-  const tHi = TN.map(p => dot(tSpin, { x: p.x - 3, y: p.y - 4, z: p.z + 6 }, 6, '#ffffff'));
-  const tRods = [];
-  for (let i = 0; i < TN.length; i++) for (let j = i + 1; j < TN.length; j++) {
-    const r = line(tSpin, [], 3.5, C.rigidL);
-    r._i = i; r._j = j;
-    const w = { x: Math.sin(i * 7 + j), y: Math.cos(i * 3 + j * 5), z: Math.sin(i + j * 2) };
-    const n = Math.hypot(w.x, w.y, w.z) || 1; r._w = { x: w.x / n, y: w.y / n, z: w.z / n };
-    r.path = Array.from({ length: 9 }, () => ({ x: 0, y: 0, z: 0 }));
-    tRods.push(r);
-  }
-  const K = { v: 1 }; // 世界のかたさ κ
-
-  function noise(i, t) { return Math.sin(t * 1.3 + i * 1.7) + 0.5 * Math.sin(t * 2.3 + i * 3.1); }
-  function updateTetra(t) {
-    const s = 1 - K.v;
-    const P = TN.map((p, i) => ({
-      x: p.x + s * 42 * noise(i, t), y: p.y + s * 42 * noise(i + 10, t * 1.1) + s * s * 40, z: p.z + s * 42 * noise(i + 20, t * 0.9)
-    }));
-    const col = mix(C.rigid, C.accent, ease(s * 1.4));
-    tNodes.forEach((n, i) => { n.translate.set(P[i]); n._c = col; });
-    tHi.forEach((n, i) => n.translate.set({ x: P[i].x - 3, y: P[i].y - 4, z: P[i].z + 6 }));
-    const rc = mix(C.rigidL, C.accentL, ease(s * 1.4));
-    tRods.forEach((r, k) => {
-      const a = P[r._i], b = P[r._j];
-      for (let q = 0; q < 9; q++) {
-        const u = q / 8, amp = s * 16 * Math.sin(Math.PI * u) * Math.sin(t * 3 + k);
-        r.path[q].x = a.x + (b.x - a.x) * u + r._w.x * amp;
-        r.path[q].y = a.y + (b.y - a.y) * u + r._w.y * amp;
-        r.path[q].z = a.z + (b.z - a.z) * u + r._w.z * amp;
-      }
-      r._c = rc; r.updatePath();
-    });
-  }
-
-  // ---------- くずれていく世界の4つの小さなイラスト ----------
-  // ① 押してもすぐ届かないブロック列
-  const gBlocks = group({ translate: { x: -265, y: -120 } });
-  line(gBlocks, [{ x: -70, y: 16 }, { x: 70, y: 16 }], 3, '#3a4a5c');
-  const arrow = new Zdog.Anchor({ addTo: gBlocks });
-  line(arrow, [{ x: -96, y: 0 }, { x: -72, y: 0 }], 6, C.warn);
-  line(arrow, [{ x: -79, y: -7 }, { x: -71, y: 0 }, { x: -79, y: 7 }], 5, C.warn);
-  const blocks = [0, 1, 2, 3].map(i => new Zdog.Box({
-    addTo: gBlocks, width: 24, height: 24, depth: 24, translate: { x: -45 + i * 30 }, stroke: 2, fill: true,
-    color: C.rigid, topFace: C.rigidL, leftFace: '#3a9fd6', rightFace: '#3a9fd6', bottomFace: '#2a7fb0', rearFace: '#2a7fb0'
-  }));
-  // ② うまく転がれないボール
-  const gBall = group({ translate: { x: 265, y: -120 } });
-  line(gBall, [{ x: -80, y: -34 }, { x: 80, y: 38 }], 4, '#3a4a5c');
-  const ballA = new Zdog.Anchor({ addTo: gBall });
-  const ball = new Zdog.Ellipse({ addTo: ballA, diameter: 46, stroke: 3, fill: true, color: C.jelly });
-  const ballStripe = line(ballA, [{ x: -20 }, { x: 20 }], 4, C.jellyD);
-  dot(ballA, { x: -9, y: -10, z: 2 }, 7, '#ffe1cf');
-  // ③ 回しすぎて裂けるこま
-  const gTop = group({ translate: { x: -265, y: 110 } });
-  floorDisk(gTop, 46, 120);
-  const topTilt = new Zdog.Anchor({ addTo: gTop });
-  const topSpin = new Zdog.Anchor({ addTo: topTilt });
-  line(topSpin, [{ y: -42 }, { y: 42 }], 6, '#c08a5a');
-  new Zdog.Ellipse({ addTo: topSpin, diameter: 78, rotate: { x: TAU / 4 }, stroke: 5, fill: true, color: C.warn });
-  new Zdog.Ellipse({ addTo: topSpin, diameter: 46, rotate: { x: TAU / 4 }, translate: { y: -3 }, stroke: 3, color: C.accent });
-  const frags = [0, 1, 2, 3, 4, 5].map(i => dot(topSpin, { x: 0, y: 0, z: 0 }, 9, i % 2 ? C.warn : C.accent));
-  // ④ 糸が伸びてしまう振り子
-  const gPend = group({ translate: { x: 265, y: 100 } });
-  line(gPend, [{ x: -34, y: -70 }, { x: 34, y: -70 }], 7, '#6b7a8c');
-  const pRod = line(gPend, Array.from({ length: 10 }, () => ({ x: 0, y: 0 })), 2.5, '#c9d3de');
-  const pBob = dot(gPend, { y: 40 }, 34, C.rigid);
-  const pHi = dot(gPend, { y: 34 }, 8, '#ffffff');
-  const items = [gBlocks, gBall, gTop, gPend];
-
-  function updateItems(t) {
-    const s = 1 - K.v;
-    // ①：押した波が一つずつ遅れて伝わる
-    arrow.translate.x = 4 * Math.max(0, Math.sin(t * 3));
-    blocks.forEach((b, i) => {
-      const w = Math.max(0, Math.sin(t * 3 - i * (0.15 + 1.4 * s)));
-      b.translate.x = -45 + i * 30 + w * (4 + 6 * s);
-      b.scale.x = 1 - 0.3 * s * w;
-    });
-    // ②：坂を転がるボール（やわらかいとつぶれる）
-    const u = (t * 0.22) % 1, bx = -70 + 140 * u, by = -34 + 72 * (bx + 80) / 160 - 25;
-    ballA.translate.set({ x: bx, y: by + 4 * s });
-    ball.scale.set({ x: 1 + 0.25 * s, y: 1 - 0.3 * s, z: 1 });
-    ballStripe.rotate.z = t * (5 - 4 * s);
-    gBall._ra = u > 0.9 ? 1 - (u - 0.9) * 10 : u < 0.08 ? u / 0.08 : 1;
-    // ③：首ふりするこまと、ちぎれて飛ぶ破片
-    topSpin.rotate.y = t * 9;
-    topTilt.rotate.z = 0.18 + 0.25 * s * Math.sin(t * 1.6);
-    topTilt.rotate.x = 0.18 * Math.cos(t * 1.6);
-    const cyc = (t * 0.7) % 1;
-    frags.forEach((f, i) => {
-      const a = (i / 6) * TAU, r = 30 + cyc * 110 * s;
-      f.translate.set({ x: Math.cos(a) * r, y: -2 + cyc * 30 * s, z: Math.sin(a) * r });
-      f._ca = s > 0.15 ? 1 - cyc : 0;
-    });
-    // ④：伸び縮みする振り子
-    const th = 0.55 * Math.sin(t * 2.1), L = 105 * (1 + 0.18 * s * Math.sin(t * 4.2));
-    const ex = Math.sin(th) * L, ey = -70 + Math.cos(th) * L;
-    pRod.path.forEach((p, q) => {
-      const u2 = q / 9, wob = s * 9 * Math.sin(Math.PI * u2) * Math.sin(t * 8 + q);
-      p.x = ex * u2 + Math.cos(th) * wob; p.y = -70 + (ey + 70) * u2 - Math.sin(th) * wob;
-    });
-    pRod.updatePath();
-    pBob.translate.set({ x: ex, y: ey }); pHi.translate.set({ x: ex - 5, y: ey - 6, z: 8 });
-    pBob._c = mix(C.rigid, C.accent, s);
-  }
-
-  // ---------- 観測者 ----------
-  const gObs = group({ translate: { y: 92, z: 120 } });
-  floorDisk(gObs, 62, 110);
-  const obs = new Zdog.Anchor({ addTo: gObs });
-  line(obs, [{ x: -8, y: 30 }, { x: -9, y: 58 }], 11, C.pants);
-  line(obs, [{ x: 8, y: 30 }, { x: 10, y: 58 }], 11, C.pants);
-  line(obs, [{ y: 0 }, { y: 26 }], 36, C.coat);
-  line(obs, [{ x: -20, y: 4 }, { x: -26, y: 26 }], 10, C.coat);
-  const arm = line(obs, [{ x: 20, y: 4 }, { x: 34, y: 14 }], 10, C.coat);
-  dot(obs, { y: -12, z: 0 }, 14, C.skin);
-  const head = new Zdog.Anchor({ addTo: obs, translate: { y: -34 } });
-  dot(head, { y: -4, z: -3 }, 40, C.hair);
-  dot(head, { z: 2 }, 34, C.skin);
-  dot(head, { x: -7, y: 1, z: 18 }, 4.5, '#2a2320');
-  dot(head, { x: 7, y: 1, z: 18 }, 4.5, '#2a2320');
-  dot(head, { x: -12, y: 7, z: 15 }, 5, '#f4a99a');
-  dot(head, { x: 12, y: 7, z: 15 }, 5, '#f4a99a');
-  const lantern = new Zdog.Anchor({ addTo: obs, translate: { x: 36, y: 16 } });
-  line(lantern, [{ y: 0 }, { y: 12 }], 2, '#9aa6b4');
-  dot(lantern, { y: 22 }, 30, C.warn)._ca = 0.25;
-  dot(lantern, { y: 22 }, 14, '#fff3c4');
-
-  // ---------- 石とゼリー ----------
-  const gPush = group({ translate: { x: 10 } });
-  function lane(y, mat) {
-    const a = new Zdog.Anchor({ addTo: gPush, translate: { y } });
-    new Zdog.Rect({ addTo: a, width: 470, height: 90, translate: { y: 46 }, rotate: { x: TAU / 4 }, stroke: 0, fill: true, color: C.floor });
-    const piston = new Zdog.Anchor({ addTo: a });
-    line(piston, [{ x: -150 }, { x: 0 }], 14, '#6b7a8c');
-    new Zdog.Box({ addTo: piston, width: 10, height: 54, depth: 54, translate: { x: 2 }, stroke: 2, fill: true,
-      color: '#8d9aab', leftFace: '#6b7a8c', rightFace: '#6b7a8c', topFace: '#b3bfcc' });
-    const body = new Zdog.Box(Object.assign({ addTo: a, width: 80, height: 80, depth: 80, stroke: 8, fill: true }, mat));
-    const tag = new Zdog.Anchor({ addTo: a, translate: { x: 0, y: -78 } });
-    return { piston, body, tag };
-  }
-  const stoneL = lane(-82, { color: C.stone, topFace: C.stoneL, leftFace: C.stoneD, rightFace: C.stoneD, bottomFace: C.stoneD, rearFace: C.stoneD });
-  const jellyL = lane(92, { color: C.jelly, topFace: C.jellyL, leftFace: C.jellyD, rightFace: C.jellyD, bottomFace: C.jellyD, rearFace: C.jellyD });
-  const jellyShine = dot(jellyL.body, { x: -18, y: -20, z: 41 }, 9, '#ffe1cf');
-
-  function updatePush(t) {
-    const P = 4.2, c = t % P;
-    const go = ease(c / 1.6), back = ease((c - 2.7) / 1.2);
-    const tip = -175 + 140 * go - 140 * back;          // 押し棒の先端の位置
-    const d = Math.max(0, tip + 40);                      // 箱の左面（x=-40）にめり込んだ量
-    [stoneL, jellyL].forEach(L => L.piston.translate.x = tip);
-    // 石：押された分だけ、まるごと一緒に動く（形は変わらない）
-    stoneL.body.translate.x = d;
-    // ゼリー：押された側からつぶれ、遅れてぶるぶる揺れる
-    const pushing = c < 1.6 && d > 0;
-    const after = c - 1.6;
-    let sx = 1;
-    if (pushing) sx = 1 - 0.32 * ease(d / 50);
-    else if (c >= 1.6 && c < 2.7) sx = 1 - 0.32 * Math.exp(-3.2 * after) * Math.cos(10 * after);
-    jellyL.body.scale.set({ x: sx, y: 1 / Math.sqrt(sx), z: 1 / Math.sqrt(sx) });
-    jellyL.body.translate.x = d * 0.55 + (pushing ? 40 * (1 - sx) : 0);
-    jellyL.body.translate.y = 40 * (1 - 1 / Math.sqrt(sx));
-  }
-
-  // ---------- κ の格子（3×3×3 の点とばね） ----------
-  const gLat = group({ translate: { x: -70 } });
-  floorDisk(gLat, 96, 300);
-  const LN = [];
-  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) LN.push({ x: i * 62, y: j * 62, z: k * 62 });
-  const lNodes = LN.map(p => dot(gLat, Object.assign({}, p), 15, C.rigid));
-  const lRods = [];
-  LN.forEach((a, i) => LN.forEach((b, j) => {
-    if (j <= i) return;
-    if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z) !== 62) return;
-    const r = line(gLat, [{}, {}, {}, {}, {}], 3, C.rigidL); r._i = i; r._j = j; lRods.push(r);
-  }));
-  function updateLattice(t) {
-    const s = 1 - K.v;
-    const P = LN.map((p, i) => {
-      const h = (62 - p.y) / 124;                 // 0 = 床, 1 = てっぺん
-      const spread = 1 + 0.85 * s * s * (1 - h * 0.6);
-      return {
-        x: p.x * spread + s * 8 * noise(i, t),
-        y: 62 - (62 - p.y) * (1 - 0.82 * s * s) + s * 6 * noise(i + 9, t * 1.2),
-        z: p.z * spread + s * 8 * noise(i + 18, t)
-      };
-    });
-    const col = mix(C.rigid, C.accent, ease(s * 1.3)), rc = mix(C.rigidL, C.accentL, ease(s * 1.3));
-    lNodes.forEach((n, i) => { n.translate.set(P[i]); n._c = col; });
-    lRods.forEach((r, k) => {
-      const a = P[r._i], b = P[r._j];
-      r.path.forEach((p, q) => {
-        const u = q / 4, w = s * 7 * Math.sin(Math.PI * u) * Math.sin(t * 4 + k);
-        p.x = a.x + (b.x - a.x) * u + w; p.y = a.y + (b.y - a.y) * u + w * 0.5; p.z = a.z + (b.z - a.z) * u;
-      });
-      r._c = rc; r.updatePath();
-    });
-    gLat.rotate.y = t * 0.35;
-  }
-
-  // ---------- 字幕（タイプライター） ----------
-  const $ = id => document.getElementById(id);
-  const cap = $('cap'), capText = $('capText');
-  let typing = null;
-  function typeSegs(segs, onDone) {
-    stopTyping();
-    capText.innerHTML = '';
-    cap.classList.remove('done');
-    const caret = document.createElement('span'); caret.className = 'caret';
-    let si = 0, ci = 0, cur = null, wait = 0;
-    const state = { timer: null, finish };
-    function nextSeg() {
-      const sg = segs[si];
-      if (sg.br) { capText.insertBefore(document.createElement('br'), caret); si++; return; }
-      const tag = sg.em ? 'em' : sg.b ? 'b' : sg.k ? 'span' : sg.note ? 'span' : 'span';
-      cur = document.createElement(tag);
-      if (sg.k) cur.className = 'k';
-      if (sg.note) cur.className = 'note';
-      cur._text = sg.em || sg.b || sg.k || sg.note || sg.t;
-      capText.insertBefore(cur, caret);
-      ci = 0;
-      if (sg.at) sg.at();
-      wait = sg.pause || 0;
-    }
-    function tick() {
-      if (wait > 0) { wait -= 30; return; }
-      if (!cur || ci >= cur._text.length) {
-        if (cur) { si++; cur = null; }
-        if (si >= segs.length) return finish(false);
-        nextSeg();
-        return;
-      }
-      cur.textContent += cur._text[ci++];
-    }
-    function finish(instant) {
-      if (instant) {
-        // 残りを一気に表示し、まだ呼ばれていない演出も実行する
-        if (cur) { cur.textContent = cur._text; si++; cur = null; }
-        while (si < segs.length) { nextSeg(); if (cur) { cur.textContent = cur._text; si++; cur = null; } }
-      }
-      clearInterval(state.timer); typing = null;
-      caret.remove();
-      cap.classList.add('done');
-      onDone && onDone();
-    }
-    capText.appendChild(caret);
-    state.timer = setInterval(tick, 34);
-    typing = state;
-  }
-  function stopTyping() { if (typing) { clearInterval(typing.timer); typing = null; } }
-
-  // ---------- ラベル（3D の位置に HTML を重ねる） ----------
-  const labels = [];
-  function label(anchor, text, cls) {
-    const el = document.createElement('div');
-    el.className = 'lbl ' + cls; el.textContent = text; el.style.opacity = 0;
-    $('labels').appendChild(el);
-    labels.push({ anchor, el, on: false });
-    return labels[labels.length - 1];
-  }
-  const lbStone = label(stoneL.tag, 'かたい物（剛体）：まるごと動く', 'rigid');
-  const lbJelly = label(jellyL.tag, 'やわらかい物：つぶれてから動く', 'soft');
-  function placeLabels() {
-    labels.forEach(L => {
-      if (!L.on) { L.el.style.opacity = 0; return; }
-      const o = L.anchor.renderOrigin;
-      const r = stage.getBoundingClientRect();
-      L.el.style.left = (r.left + r.width / 2 + o.x * illo.zoom) + 'px';
-      L.el.style.top = (r.top + r.height / 2 + o.y * illo.zoom) + 'px';
-      L.el.style.opacity = 1;
-    });
-  }
-
-  // ---------- 場面 ----------
-  const view = (x, y, dur = 1.4) => gsap.to(illo.rotate, { x, y, z: 0, duration: dur, ease: 'power2.inOut' });
-  const SCENES = [
-    { // 0 表紙
-      show: [book], heading: '', cap: false,
-      enter() {
-        gsap.to(hinge.rotate, { y: Math.PI, duration: 0.8 });
-        gsap.to(book.translate, { x: 0, y: 70, duration: 1 }); book._spin = true;
-        view(-0.18, 0);
-      }
-    },
-    { // 1 ある朝
-      show: [book],
-      enter() {
-        book._spin = false;
-        gsap.to(book.translate, { x: 0, y: -10, duration: 1.2, ease: 'power2.inOut' });
-        gsap.to(book.rotate, { y: 0, duration: 1.2, ease: 'power2.inOut' });
-        gsap.fromTo(hinge.rotate, { y: Math.PI }, { y: 0.12, duration: 1.8, delay: 0.3, ease: 'power3.inOut' });
-        bookState.dissolve = -1; vanishLine._ca = 1; motes.forEach(m => { m._ca = 0; m.translate.set(m._home); });
-        view(-0.22, 0);
-      },
-      segs: () => [{ t: 'ある朝、物理学の教科書から', pause: 1500 }, { em: '一行' }, { t: 'が消えた。' }],
-      done() { if (bookState.dissolve < 0) { bookState.dissolve = clock; RV.sfx.thud(0.6); } },
-      hold: 4.5
-    },
-    { // 2 剛体の定義
-      show: [tetra],
-      enter() { K.v = 1; gsap.killTweensOf(K); tetra.translate.set({ x: 0, y: -20 }); view(-0.2, 0); },
-      segs: () => [
-        { em: '「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」' },
-        { t: '──剛体の定義である。' }, { br: true },
-        { note: '（ふつうの言葉にすると「どの2点の間の長さも、ずっと変わらない物」）', pause: 400 }
-      ],
-      hold: 5
-    },
-    { // 3 それ以来
-      show: [tetra],
-      enter() {
-        K.v = 1; gsap.killTweensOf(K);
-        gsap.to(tetra.translate, { x: 0, y: -20, duration: 1 });
-        gsap.to(tetra.scale, { x: 0.72, y: 0.72, z: 0.72, duration: 1.2, delay: 0.2 });
-        items.forEach(g => show(g, false));
-        view(-0.15, 0);
-      },
-      segs: () => [
-        { t: 'それ以来、', at() { gsap.to(K, { v: 0.22, duration: 7, ease: 'sine.inOut' }); RV.sfx.tone(196, '8n'); } },
-        { t: '押した力は一瞬では伝わらなくなり、', at() { show(gBlocks, true); RV.sfx.tone(330); } },
-        { t: 'ボールはうまく転がらず、', at() { show(gBall, true); RV.sfx.tone(294); } },
-        { t: 'こまは回しすぎると裂け、', at() { show(gTop, true); RV.sfx.tone(262); } },
-        { t: '振り子では重力の強さも測れなくなった。', at() { show(gPend, true); RV.sfx.tone(220); } }
-      ],
-      hold: 4.5
-    },
-    { // 4 最後の観測者
-      show: [tetra, gBlocks, gBall, gTop, gPend, gObs],
-      enter() {
-        gsap.killTweensOf(K); gsap.to(K, { v: 0.22, duration: 1 });
-        gsap.to(tetra.translate, { x: 0, y: -60, duration: 1.2 });
-        gsap.to(tetra.scale, { x: 0.62, y: 0.62, z: 0.62, duration: 1.2 });
-        view(-0.28, 0);
-      },
-      segs: () => [{ t: 'あなたは', pause: 300 }, { em: '最後の観測者' }, { t: 'として、くずれていく世界を確かめにいく。' }],
-      hold: 4.5
-    },
-    { // 5 剛体ってなに？ ひとことで
-      show: [gPush], heading: '剛体（ごうたい）ってなに？', labels: [lbStone, lbJelly],
-      enter() { view(-0.28, -0.35); },
-      segs: () => [
-        { b: 'ひとことで　' }, { t: 'どれだけ押しても引いても、' }, { b: '形が少しも変わらない物' },
-        { t: 'のこと。物理の教科書は、石やボールをこの「理想のかたい物」として考えます。' }
-      ],
-      hold: 5
-    },
-    { // 6 本当は？
-      show: [gPush], heading: '剛体（ごうたい）ってなに？', labels: [lbStone, lbJelly],
-      enter() { view(-0.3, 0.3); },
-      segs: () => [
-        { b: '本当は？　' }, { t: '現実の物はほんの少しだけ縮んだり曲がったりします。このゲームでは、その「少し」を大きくしていったら世界がどう変わるかを体験します。' }
-      ],
-      hold: 5.5
-    },
-    { // 7 κ
-      show: [gLat], heading: 'κ（カッパ）', kmeter: true,
-      enter() {
-        gLat._ra = 1;
-        gsap.killTweensOf(K); K.v = 1;
-        gsap.to(K, { v: 0.04, duration: 3.2, delay: 0.8, ease: 'sine.inOut', yoyo: true, repeat: -1, repeatDelay: 0.9 });
-        gLat.translate.x = innerWidth < 720 ? 0 : -70;
-        view(-0.32, 0);
-      },
-      segs: () => [
-        { t: 'このゲームでの「かたさ」の目盛り。' }, { k: '1 = 完全にかたい' }, { t: '、0 に近いほどやわらかい。' }
-      ],
-      hold: 7
-    },
-    { // 8 遊び方
-      show: [], heading: '遊び方（3ステップ）', cap: false, steps: true,
-      enter() {
-        gsap.killTweensOf(K); gsap.to(K, { v: 0.55, duration: 1.5 }); gLat._ra = 0.28;
-        gsap.to(gLat.translate, { x: 0, duration: 1 });
-        try { localStorage.setItem('rv-intro-seen', '1'); } catch (e) { }
-        view(-0.32, 0);
-      }
-    }
-  ];
-
-  // ---------- レイアウト：いちばん長い字幕の高さを測って、その上だけを舞台にする ----------
-  const stage = $('stage');
-  function segsText(segs) {
-    return segs.map(g => g.br ? '<br>' : g.em ? `<em>${g.em}</em>` : g.b ? `<b>${g.b}</b>`
-      : g.k ? `<span class="k">${g.k}</span>` : g.note ? `<span class="note">${g.note}</span>` : g.t).join('');
-  }
-  function layout() {
-    const m = document.createElement('div');
-    m.id = 'capMeasure'; m.style.width = cap.getBoundingClientRect().width + 'px';
-    m.style.padding = getComputedStyle(cap).padding;
-    const tx = document.createElement('div'); tx.id = 'capText'; tx.style.cssText = 'min-height:0';
-    m.appendChild(tx); document.body.appendChild(m);
-    let maxH = 0;
-    SCENES.forEach(sc => { if (sc.segs) { tx.innerHTML = segsText(sc.segs()); maxH = Math.max(maxH, m.offsetHeight); } });
-    m.remove();
-    const mobile = innerWidth < 720;
-    const top = mobile ? 150 : 70;
-    const bottom = parseFloat(getComputedStyle(cap).bottom) + maxH + 12;
-    const h = Math.max(160, innerHeight - top - bottom);
-    stage.style.top = top + 'px'; stage.style.height = h + 'px';
-    illo.setSize(innerWidth, h);
-    illo.zoom = Math.min(innerWidth / 720, h / 380);
-  }
-  addEventListener('resize', layout);
-  layout();
-
-  // ---------- 進行 ----------
-  let cur = -1, clock = 0, autoTimer = null;
-  const dotsEl = $('dots');
-  SCENES.forEach((_, i) => {
-    if (i === 0) return;
-    const b = document.createElement('button');
-    b.setAttribute('aria-label', `場面 ${i}`);
-    b.onclick = () => go(i);
-    dotsEl.appendChild(b);
+function updateItems(t) {
+  const s = 1 - K.v;
+  // ①：押した動きが一つずつ遅れて伝わる
+  pusher.position.x = 0.05 * Math.max(0, Math.sin(t * 3));
+  blocks.forEach((b, i) => {
+    const w = Math.max(0, Math.sin(t * 3 - i * (0.12 + 1.3 * s)));
+    b.position.x = -0.6 + i * 0.32 + w * (0.05 + 0.06 * s);
+    b.scale.set(1 - 0.28 * s * w, 1 + 0.1 * s * w, 1 + 0.1 * s * w);
+    b.material.color.setRGB(1, 1 - 0.35 * s, 1 - 0.5 * s);
   });
-  function go(n) {
-    n = clamp(n, 0, SCENES.length - 1);
-    clearTimeout(autoTimer);
-    const sc = SCENES[n];
-    cur = n;
-    groups.forEach(g => show(g, sc.show.includes(g)));
-    if (n !== 3 && n !== 4) { gsap.to(tetra.scale, { x: 1, y: 1, z: 1, duration: 0.8 }); }
-    sc.enter && sc.enter();
-    $('title').classList.toggle('hide', n !== 0);
-    $('nav').classList.toggle('off', n === 0);
-    $('skip').style.display = n === 8 ? 'none' : '';
-    const h = $('heading');
-    if (sc.heading) { h.textContent = sc.heading; h.classList.remove('off'); } else h.classList.add('off');
-    $('kmeter').classList.toggle('off', !sc.kmeter);
-    labels.forEach(L => L.on = (sc.labels || []).includes(L));
-    [...dotsEl.children].forEach((b, i) => b.classList.toggle('on', i + 1 === n));
-    $('prev').disabled = n <= 1; $('next').disabled = n >= SCENES.length - 1;
-    // 遊び方カード
-    const st = $('steps');
-    st.classList.toggle('off', !sc.steps);
-    st.querySelectorAll('.step, .tail').forEach(el => el.classList.remove('in'));
-    if (sc.steps) st.querySelectorAll('.step, .tail').forEach((el, i) => setTimeout(() => cur === n && el.classList.add('in'), 300 + i * 450));
-    // 字幕
-    if (sc.cap === false || !sc.segs) { stopTyping(); cap.classList.add('off'); }
-    else {
-      cap.classList.remove('off');
-      if (n > 0) RV.sfx.bell();
-      typeSegs(sc.segs(), () => {
-        sc.done && sc.done();
-        if ($('autoChk').checked && n < SCENES.length - 1) autoTimer = setTimeout(() => cur === n && go(n + 1), (sc.hold || 4) * 1000);
-      });
-    }
+  // ②：坂を転がるボール（やわらかいとつぶれて、うまく回らない）
+  const u = (t * 0.22) % 1, x = -0.85 + 1.7 * u;
+  const y = 0.36 - Math.tan(SLOPE) * x;
+  const r = 0.17 * (1 - 0.25 * s);
+  ball.position.set(x + Math.sin(SLOPE) * r, y + Math.cos(SLOPE) * r + 0.025, 0);
+  ball.scale.set(1 + 0.25 * s, 1 - 0.28 * s, 1 + 0.25 * s);
+  ball.rotation.z = -(x / 0.17) * (1 - 0.8 * s);
+  // ③：首ふりするこまと、ちぎれて飛ぶ破片
+  topMesh.rotation.y = t * 14;
+  topTilt.rotation.z = 0.12 + 0.22 * s * Math.sin(t * 1.6);
+  topTilt.rotation.x = 0.12 * Math.cos(t * 1.6);
+  topMesh.scale.set(1 + 0.25 * s, 1 - 0.12 * s, 1 + 0.25 * s);
+  const cyc = (t * 0.7) % 1;
+  for (let i = 0; i < CHIPS; i++) {
+    const a = (i / CHIPS) * Math.PI * 2 + t * 2, rr = 0.36 + cyc * 1.1 * s;
+    _p.set(Math.cos(a) * rr, 0.3 + cyc * 0.4 * s - cyc * cyc * 0.6 * s, Math.sin(a) * rr);
+    _q.setFromEuler(new THREE.Euler(t * 5 + i, t * 3, 0));
+    chips.setMatrixAt(i, _m4.compose(_p, _q, _s.setScalar(s > 0.15 ? 1 - cyc : 0.0001)));
   }
-  function next() {
-    if (cur === 0) return go(1);
-    if (typing) return typing.finish(true);   // 文字送り中なら、まず全文を出す
-    if (cur < SCENES.length - 1) go(cur + 1);
+  chips.instanceMatrix.needsUpdate = true;
+  // ④：糸がのびちぢみして、ゆれのリズムが乱れる振り子
+  const th = 0.5 * Math.sin(t * 2.4), L = 1.05 * (1 + 0.2 * s * Math.sin(t * 4.8));
+  const end = new THREE.Vector3(PIV.x + Math.sin(th) * L, PIV.y - Math.cos(th) * L, 0);
+  const pts = [];
+  for (let q = 0; q <= 8; q++) {
+    const uu = q / 8, wob = s * 0.06 * Math.sin(Math.PI * uu) * Math.sin(t * 8 + q);
+    pts.push(new THREE.Vector3().lerpVectors(PIV, end, uu).add(new THREE.Vector3(Math.cos(th) * wob, Math.sin(th) * wob, 0)));
   }
-  $('start').onclick = () => { RV.sfx.unlock(); go(1); };
-  $('next').onclick = next;
-  $('prev').onclick = () => go(cur - 1);
-  cap.onclick = next;
-  $('autoChk').onchange = e => {
-    if (!e.target.checked) clearTimeout(autoTimer);
-    else if (!typing && cur > 0 && cur < SCENES.length - 1) autoTimer = setTimeout(() => go(cur + 1), 2500);
-  };
-  document.querySelectorAll('[data-done]').forEach(a => a.addEventListener('click', () => {
-    try { localStorage.setItem('rv-intro-seen', '1'); } catch (e) { }
-  }));
-  addEventListener('keydown', e => {
-    if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); next(); }
-    else if (e.key === 'ArrowLeft') go(cur - 1);
-    else if (e.key === 'Escape') { try { localStorage.setItem('rv-intro-seen', '1'); } catch (er) { } location.href = 'index.html?hub'; }
+  tube(string, pts, 0.008, 12);
+  bob.position.copy(end);
+  bob.scale.set(1 + 0.2 * s, 1 - 0.2 * s * Math.abs(Math.sin(t * 4.8)), 1 + 0.2 * s);
+}
+
+// ---------- 観測者（ロボット）とランタン ----------
+const gObs = group(); gObs.position.set(0, 0, 1.9);
+const lantern = new THREE.Group(); lantern.position.set(0.55, 0, 0.1); gObs.add(lantern);
+const brass = M.brass({ roughness: 0.35 });
+lantern.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 0.05, 24), brass), 0, 0.025, 0));
+lantern.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.15, 0.08, 24), brass), 0, 0.46, 0));
+[0, 1, 2, 3].forEach(i => { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.38, 8), brass); const a = i * Math.PI / 2 + Math.PI / 4; p.position.set(Math.cos(a) * 0.12, 0.24, Math.sin(a) * 0.12); lantern.add(p); });
+lantern.add(at(new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.012, 8, 24), brass), 0, 0.55, 0));
+const flame = new THREE.Mesh(new THREE.SphereGeometry(0.07, 20, 14), M.glow(0xffc070, 7)); flame.position.y = 0.24; flame.scale.y = 1.5; lantern.add(flame);
+const glassC = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.36, 24, 1, true), M.glass({ roughness: 0.1 })); glassC.position.y = 0.24; lantern.add(glassC);
+const lanternLight = new THREE.PointLight(0xffb060, 1.2, 4, 1.8); lanternLight.position.y = 0.3; lantern.add(lanternLight);
+let robot = null, mixer = null, actions = {};
+loadGLTF(ASSET('models/RobotExpressive.glb')).then(g => {
+  robot = g.scene; robot.scale.setScalar(0.24); W.shadow(robot);
+  gObs.add(robot);
+  mixer = new THREE.AnimationMixer(robot);
+  g.animations.forEach(a => actions[a.name] = mixer.clipAction(a));
+  ['Wave', 'Yes'].forEach(n => { if (actions[n]) { actions[n].setLoop(THREE.LoopOnce); actions[n].clampWhenFinished = true; } });
+  actions.Idle && actions.Idle.play();
+}).catch(() => { /* モデルが読めなくても物語は進める */ });
+function act(name, fade = 0.35) {
+  const a = actions[name]; if (!a) return;
+  Object.values(actions).forEach(o => { if (o !== a && o.isRunning()) o.fadeOut(fade); });
+  a.reset().fadeIn(fade).play();
+}
+function robotEnter() {
+  if (!robot) return;
+  gsap.killTweensOf(robot.position); gsap.killTweensOf(robot.rotation);
+  robot.position.set(3.2, 0, 0.2); robot.rotation.y = -Math.PI / 2;
+  act('Walking');
+  gsap.to(robot.position, { x: 0, duration: 2.6, ease: 'none', onComplete() {
+    gsap.to(robot.rotation, { y: 0, duration: 0.5 });
+    act('Wave'); setTimeout(() => act('Idle'), 2200);
+  } });
+}
+
+// ---------- 石とゼリー ----------
+const gPush = group();
+const cube = await roundedBox(0.8, 0.8, 0.8, 0.07, 4);
+function lane(z, mat) {
+  const L = new THREE.Group(); L.position.z = z; gPush.add(L);
+  const piston = new THREE.Group(); L.add(piston);
+  const pr = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 20), M.steel()); pr.rotation.z = Math.PI / 2; pr.position.set(-0.84, 0.4, 0); piston.add(pr);
+  const pp = new THREE.Mesh(blockGeo, M.steel()); pp.scale.set(0.2, 1.4, 1.4); pp.position.set(-0.02, 0.4, 0); piston.add(pp);
+  const body = new THREE.Mesh(cube, mat); body.position.y = 0.4; L.add(body);
+  return { piston, body, tag: new THREE.Vector3() };
+}
+const stoneL = lane(-0.7, M.stone({ base: '#8a8f96', seed: 6 }));
+const jellyL = lane(0.75, M.jelly(0xff8a5c, { thickness: 1.2 }));
+function updatePush(t) {
+  const P = 4.2, c = t % P;
+  const go = ease(c / 1.6), back = ease((c - 2.7) / 1.2);
+  const tip = -1.5 + 1.5 * go - 1.5 * back;        // 押し板の先端
+  const d = Math.max(0, tip + 0.4);                  // 箱の左面（x=-0.4）にめり込んだ量
+  [stoneL, jellyL].forEach(L => L.piston.position.x = tip);
+  // 石：押された分だけ、まるごと一緒に動く（形は変わらない）
+  stoneL.body.position.x = d;
+  // ゼリー：押された側からつぶれ、遅れてぷるぷる揺れる
+  const pushing = c < 1.6 && d > 0, after = c - 1.6;
+  let sx = 1;
+  if (pushing) sx = 1 - 0.3 * ease(d / 0.4);
+  else if (c >= 1.6 && c < 2.9) sx = 1 - 0.3 * Math.exp(-3.2 * after) * Math.cos(10 * after);
+  const sy = 1 / Math.sqrt(sx);
+  jellyL.body.scale.set(sx, sy, sy);
+  jellyL.body.position.x = d * 0.55 + (pushing ? 0.4 * (1 - sx) : 0);
+  jellyL.body.position.y = 0.4 * sy;
+}
+
+// ---------- κ の格子（3×3×3 の金属球とばね） ----------
+const gLat = group(); gLat.position.set(-0.6, 0, 0);
+const LN = [];
+for (let i = -1; i <= 1; i++) for (let j = 0; j <= 2; j++) for (let k = -1; k <= 1; k++) LN.push(new THREE.Vector3(i * 0.5, 0.12 + j * 0.5, k * 0.5));
+const latMat = new THREE.MeshPhysicalMaterial({ color: 0xdfe6ee, metalness: 1, roughness: 0.15, clearcoat: 0.5 });
+const latNodes = new THREE.InstancedMesh(new THREE.SphereGeometry(0.08, 24, 16), latMat, LN.length);
+latNodes.castShadow = true; gLat.add(latNodes);
+const latRodMat = new THREE.MeshPhysicalMaterial({ color: 0xb9c3cf, metalness: 1, roughness: 0.3 });
+const latRods = [];
+LN.forEach((a, i) => LN.forEach((b, j) => {
+  if (j <= i || Math.abs(a.distanceTo(b) - 0.5) > 1e-6) return;
+  const m = new THREE.Mesh(new THREE.BufferGeometry(), latRodMat); m.castShadow = true; m.userData = { i, j }; gLat.add(m); latRods.push(m);
+}));
+let latLast = -1;
+function updateLattice(t) {
+  const s = 1 - K.v;
+  latMat.color.copy(C_STEEL).lerp(C_SOFT, ease(s * 1.3)); latMat.metalness = 1 - 0.9 * ease(s * 1.3);
+  latRodMat.color.copy(C_ROD).lerp(C_SOFTR, ease(s * 1.3)); latRodMat.metalness = latMat.metalness;
+  gLat.rotation.y = t * 0.3;
+  if (Math.abs(s - latLast) < 0.002 && s < 0.002) return;
+  latLast = s;
+  const P = LN.map((p, i) => {
+    const h = (p.y - 0.12) / 1.0;                       // 0 = 机, 1 = てっぺん
+    const spread = 1 + 0.9 * s * s * (1 - h * 0.6);
+    return new THREE.Vector3(p.x * spread + s * 0.05 * noise(i, t), 0.12 + (p.y - 0.12) * (1 - 0.85 * s * s) + s * 0.03 * noise(i + 9, t * 1.2), p.z * spread + s * 0.05 * noise(i + 18, t));
   });
+  P.forEach((p, i) => latNodes.setMatrixAt(i, _m4.compose(p, _q.identity(), _s.set(1 + 0.3 * s, 1 - 0.4 * s, 1 + 0.3 * s))));
+  latNodes.instanceMatrix.needsUpdate = true;
+  latRods.forEach((r, k) => {
+    const a = P[r.userData.i], b = P[r.userData.j], pts = [];
+    for (let q = 0; q <= 4; q++) {
+      const u = q / 4, w = s * 0.05 * Math.sin(Math.PI * u) * Math.sin(t * 4 + k);
+      pts.push(new THREE.Vector3().lerpVectors(a, b, u).add(new THREE.Vector3(w, w * 0.5, 0)));
+    }
+    tube(r, pts, 0.022, 6);
+  });
+}
 
-  // ---------- 描画ループ ----------
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000); last = now; clock += dt;
-    const t = clock;
-    if (book._on) {
-      const open = Math.cos(hinge.rotate.y) > 0;
-      pageInk.forEach(l => l._ca = open ? 1 : 0);
-      // 開いている間は左ページ、閉じている間は表紙だけを見せる（重なり順の乱れを防ぐ）
-      leftCover.children.forEach(d => d._ca = open ? 0 : 1);
-      leftPage.children.forEach(d => d._ca = open ? 1 : 0);
-      if (bookState.dissolve < 0) vanishLine._ca = open ? 1 : 0;
-      if (book._spin) book.rotate.y += dt * 0.5;
-      else book.rotate.y = 0.22 * Math.sin(t * 0.5);
-      if (bookState.dissolve >= 0) {
-        const e = t - bookState.dissolve;
-        vanishLine._ca = Math.max(0, 1 - e * 3);
-        motes.forEach((m, i) => {
-          const k = Math.max(0, e - (i / 46) * 0.5);
-          m._ca = k <= 0 ? 0 : Math.max(0, 1 - k / 2.4);
-          m.translate.set({ x: m._home.x + m._v.x * k, y: m._home.y + m._v.y * k + 6 * Math.sin(k * 4 + i), z: m._home.z + m._v.z * k });
-        });
-      }
-    }
-    if (tetra._on) { updateTetra(t); tSpin.rotate.y = t * 0.45; tSpin.rotate.x = 0.3 * Math.sin(t * 0.3); }
-    if (items.some(g => g._on)) updateItems(t);
-    if (gObs._on) { obs.rotate.y = 0.4 * Math.sin(t * 0.6); head.rotate.z = 0.08 * Math.sin(t * 1.3); arm.path[1].y = 14 + 2 * Math.sin(t * 2); arm.updatePath(); lantern.translate.y = 16 + 2 * Math.sin(t * 2); }
-    if (gPush._on) updatePush(t);
-    if (gLat._on) updateLattice(t);
-    groups.forEach(g => { if (g._on) paint(g, g._a * (g._ra === undefined ? 1 : g._ra)); });
-    illo.updateRenderGraph();
-    placeLabels();
-    if (cur === 7) {
-      $('kv').textContent = K.v.toFixed(2);
-      $('kb').style.width = (K.v * 100) + '%';
-      const ks = $('ks');
-      ks.textContent = K.v > 0.8 ? 'かたい' : K.v > 0.4 ? 'ゴムっぽい' : K.v > 0.15 ? 'ぐにゃぐにゃ' : 'とけた';
-      ks.style.color = mix(C.accent, C.rigid, K.v);
-    }
-    requestAnimationFrame(frame);
+// ---------- 字幕（タイプライター） ----------
+let typing = null;
+function typeSegs(segs, hooks, onDone) {
+  stopTyping();
+  capText.innerHTML = '';
+  cap.classList.remove('done');
+  const caret = document.createElement('span'); caret.className = 'caret';
+  let si = 0, ci = 0, cur = null, wait = 0;
+  const state = { timer: null, finish };
+  function nextSeg() {
+    const sg = segs[si];
+    if (sg.br) { capText.insertBefore(document.createElement('br'), caret); si++; return; }
+    cur = document.createElement(sg.em ? 'em' : sg.b ? 'b' : 'span');
+    if (sg.k) cur.className = 'k';
+    if (sg.note) cur.className = 'note';
+    cur._text = sg.em || sg.b || sg.k || sg.note || sg.t;
+    capText.insertBefore(cur, caret);
+    ci = 0;
+    hooks && hooks[si] && hooks[si]();
+    wait = sg.pause || 0;
   }
-  go(0);
-  requestAnimationFrame(frame);
+  function tick() {
+    if (wait > 0) { wait -= 34; return; }
+    if (!cur || ci >= cur._text.length) {
+      if (cur) { si++; cur = null; }
+      if (si >= segs.length) return finish(false);
+      nextSeg();
+      return;
+    }
+    cur.textContent += cur._text[ci++];
+  }
+  function finish(instant) {
+    if (instant) {
+      if (cur) { cur.textContent = cur._text; si++; cur = null; }
+      while (si < segs.length) { nextSeg(); if (cur) { cur.textContent = cur._text; si++; cur = null; } }
+    }
+    clearInterval(state.timer); typing = null;
+    caret.remove();
+    cap.classList.add('done');
+    onDone && onDone();
+  }
+  capText.appendChild(caret);
+  state.timer = setInterval(tick, 34);
+  typing = state;
+}
+function stopTyping() { if (typing) { clearInterval(typing.timer); typing = null; } }
 
-  // テスト用
-  window.__intro = { go, get scene() { return cur; }, K };
-})();
+// ---------- ラベル（3D の位置に HTML を重ねる） ----------
+const labels = [];
+function label(getPos, text, cls) {
+  const el = document.createElement('div');
+  el.className = 'lbl ' + cls; el.textContent = text; el.style.opacity = 0;
+  $('labels').appendChild(el);
+  const L = { getPos, el, on: false }; labels.push(L); return L;
+}
+const _w = new THREE.Vector3();
+const lbStone = label(() => stoneL.body.getWorldPosition(_w).add(new THREE.Vector3(0, 0.75, 0)), 'かたい物（剛体）：まるごと動く', 'rigid');
+const lbJelly = label(() => jellyL.body.getWorldPosition(_w).add(new THREE.Vector3(0, 0.8, 0)), 'やわらかい物：つぶれてから動く', 'soft');
+function placeLabels() {
+  labels.forEach(L => {
+    if (!L.on) { L.el.style.opacity = 0; return; }
+    const p = W.toScreen(L.getPos());
+    L.el.style.left = p.x + 'px'; L.el.style.top = p.y + 'px'; L.el.style.opacity = p.behind ? 0 : 1;
+  });
+}
+
+// ---------- カメラ ----------
+function view(pos, target, dur = 1.8) {
+  gsap.to(camera.position, { x: pos[0], y: pos[1], z: pos[2], duration: dur, ease: 'power2.inOut' });
+  gsap.to(controls.target, { x: target[0], y: target[1], z: target[2], duration: dur, ease: 'power2.inOut' });
+}
+
+// ---------- 場面 ----------
+let clock = 0;
+const SCENES = [
+  { // 0 表紙
+    show: [book], cap: false,
+    enter() {
+      controls.autoRotate = true; controls.autoRotateSpeed = 0.7;
+      gsap.to(FOCUS, { y: innerHeight * 0.6, duration: 1 });
+      gsap.to(hinge.rotation, { z: -Math.PI, duration: 0.8 });
+      view([2.6, 3.0, 4.0], [0.5, 0.1, 0]);
+    }
+  },
+  { // 1 ある朝
+    show: [book],
+    enter() {
+      bookState.dissolve = -1; bookState.vanish = -1;
+      gsap.fromTo(hinge.rotation, { z: -Math.PI }, { z: -0.02, duration: 2.0, delay: 0.4, ease: 'power3.inOut' });
+      view([0.1, 3.7, 2.7], [0.05, 0.1, 0.3], 2.2);
+    },
+    done() { setTimeout(() => { if (cur === 1 && bookState.dissolve < 0) { bookState.dissolve = clock; RV.sfx.thud(0.6); } }, 1200); },
+    hold: 5
+  },
+  { // 2 剛体の定義
+    show: [book, struct],
+    enter() { gsap.killTweensOf(K); K.v = 1; sLastS = -1; gsap.to(hinge.rotation, { z: -0.02, duration: 0.5 }); gsap.to(struct.position, { y: 1.9, duration: 0.6 }); view([0, 2.5, 5.4], [0.1, 1.5, 0]); },
+    hold: 5
+  },
+  { // 3 それ以来
+    show: [book, struct],
+    enter() { gsap.killTweensOf(K); K.v = 1; items.forEach(g => show(g, false)); gsap.to(hinge.rotation, { z: -0.02, duration: 0.5 }); view([0, 4.6, 7.4], [0, 0.7, 0]); },
+    hooks: [
+      () => { gsap.to(K, { v: 0.2, duration: 7, ease: 'sine.inOut' }); RV.sfx.tone(196, '8n'); },
+      () => { show(gBlocks, true); RV.sfx.tone(330); },
+      () => { show(gBall, true); RV.sfx.tone(294); },
+      () => { show(gTop, true); RV.sfx.tone(262); },
+      () => { show(gPend, true); RV.sfx.tone(220); }
+    ],
+    hold: 4.5
+  },
+  { // 4 最後の観測者
+    show: [book, struct, gBlocks, gBall, gTop, gPend, gObs],
+    enter() { gsap.killTweensOf(K); gsap.to(K, { v: 0.2, duration: 1 }); robotEnter(); gsap.to(hinge.rotation, { z: -0.02, duration: 0.5 }); gsap.to(struct.position, { y: 1.75, duration: 1 }); view([0.9, 3.0, 7.6], [0.2, 0.75, 0.5]); },
+    hold: 5
+  },
+  { // 5 ひとことで
+    show: [gPush], heading: '剛体（ごうたい）ってなに？', labels: [lbStone, lbJelly],
+    enter() { view([-1.6, 2.3, 3.9], [0.1, 0.4, 0.1]); },
+    hold: 5
+  },
+  { // 6 本当は？
+    show: [gPush], heading: '剛体（ごうたい）ってなに？', labels: [lbStone, lbJelly],
+    enter() { view([1.9, 2.2, 3.9], [0.1, 0.4, 0.1]); },
+    hold: 5.5
+  },
+  { // 7 κ
+    show: [gLat], heading: 'κ（カッパ）', kmeter: true,
+    enter() {
+      gsap.killTweensOf(K); K.v = 1; latLast = -1;
+      gsap.to(K, { v: 0.04, duration: 3.2, delay: 0.8, ease: 'sine.inOut', yoyo: true, repeat: -1, repeatDelay: 0.9 });
+      gLat.position.x = innerWidth < 720 ? 0 : -0.6;
+      view([0, 2.1, 4.2], [-0.25, 0.55, 0]);
+    },
+    hold: 7
+  },
+  { // 8 遊び方
+    show: [], heading: '遊び方（3ステップ）', cap: false, steps: true,
+    enter() {
+      gsap.killTweensOf(K); K.v = 1;
+      try { localStorage.setItem('rv-intro-seen', '1'); } catch (e) { }
+      view([0, 6.5, 6.5], [0, 0, 0]);
+    }
+  }
+];
+
+// ---------- 進行 ----------
+let cur = -1, autoTimer = null;
+const dotsEl = $('dots');
+SCENES.forEach((_, i) => {
+  if (i === 0) return;
+  const b = document.createElement('button');
+  b.setAttribute('aria-label', `場面 ${i}`);
+  b.onclick = () => go(i);
+  dotsEl.appendChild(b);
+});
+function go(n) {
+  n = clamp(n, 0, SCENES.length - 1);
+  clearTimeout(autoTimer);
+  const sc = SCENES[n];
+  cur = n;
+  if (n !== 0) { controls.autoRotate = false; gsap.to(FOCUS, { y: FOCUS.free.y, duration: 1.2, ease: 'power2.inOut' }); }
+  groups.forEach(g => show(g, sc.show.includes(g)));
+  sc.enter && sc.enter();
+  $('title').classList.toggle('hide', n !== 0);
+  $('nav').classList.toggle('off', n === 0);
+  $('skip').style.display = n === 8 ? 'none' : '';
+  const h = $('heading');
+  if (sc.heading) { h.textContent = sc.heading; h.classList.remove('off'); } else h.classList.add('off');
+  $('kmeter').classList.toggle('off', !sc.kmeter);
+  labels.forEach(L => L.on = (sc.labels || []).includes(L));
+  [...dotsEl.children].forEach((b, i) => b.classList.toggle('on', i + 1 === n));
+  $('prev').disabled = n <= 1; $('next').disabled = n >= SCENES.length - 1;
+  const st = $('steps');
+  st.classList.toggle('off', !sc.steps);
+  st.querySelectorAll('.step, .tail').forEach(el => el.classList.remove('in'));
+  if (sc.steps) st.querySelectorAll('.step, .tail').forEach((el, i) => setTimeout(() => cur === n && el.classList.add('in'), 300 + i * 450));
+  if (sc.cap === false || !TEXT[n]) { stopTyping(); cap.classList.add('off'); }
+  else {
+    cap.classList.remove('off');
+    RV.sfx.bell();
+    typeSegs(TEXT[n], sc.hooks, () => {
+      sc.done && sc.done();
+      if ($('autoChk').checked && n < SCENES.length - 1) autoTimer = setTimeout(() => cur === n && go(n + 1), (sc.hold || 4) * 1000);
+    });
+  }
+}
+function next() {
+  if (cur === 0) return go(1);
+  if (typing) return typing.finish(true);    // 文字送り中なら、まず全文を出す
+  if (cur < SCENES.length - 1) go(cur + 1);
+}
+$('start').onclick = () => { RV.sfx.unlock(); go(1); };
+$('next').onclick = next;
+$('prev').onclick = () => go(cur - 1);
+cap.onclick = next;
+$('autoChk').onchange = e => {
+  if (!e.target.checked) clearTimeout(autoTimer);
+  else if (!typing && cur > 0 && cur < SCENES.length - 1) autoTimer = setTimeout(() => go(cur + 1), 2500);
+};
+document.querySelectorAll('[data-done]').forEach(a => a.addEventListener('click', () => {
+  try { localStorage.setItem('rv-intro-seen', '1'); } catch (e) { }
+}));
+addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); next(); }
+  else if (e.key === 'ArrowLeft') go(cur - 1);
+  else if (e.key === 'Escape') { try { localStorage.setItem('rv-intro-seen', '1'); } catch (er) { } location.href = 'index.html?hub'; }
+});
+
+// ---------- 毎フレーム ----------
+W.onFrame((dt, t) => {
+  clock = t;
+  applyFocus();
+  if (book.visible) { updateMotes(t); spine.visible = Math.cos(hinge.rotation.z) < -0.3; }
+  if (struct.visible) { updateStruct(t); sSpin.rotation.y = t * 0.45; sSpin.rotation.x = 0.25 * Math.sin(t * 0.3); }
+  if (items.some(g => g.visible)) updateItems(t);
+  if (gObs.visible) { mixer && mixer.update(dt); flame.scale.y = 1.5 + 0.12 * Math.sin(t * 17) + 0.08 * Math.sin(t * 29); lanternLight.intensity = 1.2 + 0.2 * Math.sin(t * 23); }
+  if (gPush.visible) updatePush(t);
+  if (gLat.visible) updateLattice(t);
+  placeLabels();
+  if (cur === 7) {
+    $('kv').textContent = K.v.toFixed(2);
+    $('kb').style.width = (K.v * 100) + '%';
+    const ks = $('ks');
+    ks.textContent = K.v > 0.8 ? 'かたい' : K.v > 0.4 ? 'ゴムっぽい' : K.v > 0.15 ? 'ぐにゃぐにゃ' : 'とけた';
+    ks.style.color = K.v > 0.5 ? 'var(--rigid)' : 'var(--accent)';
+  }
+});
+go(0);
+
+// テスト用
+window.__intro = { go, get scene() { return cur; }, K, ready: true };
 </script>
 </body>
 </html>

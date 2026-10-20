@@ -5,17 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>振り子で重力を測れ</title>
 <link rel="stylesheet" href="../shared/common.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 <style>
   .chart-box { position: relative; height: 170px; }
   table.recs { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
   table.recs td, table.recs th { padding: 2px 4px; border-bottom: 1px dashed #263040; text-align: right; }
   table.recs th { color: var(--muted); font-weight: 400; }
   .recs-wrap { max-height: 130px; overflow-y: auto; }
+  /* 3D ステージ上の HTML ラベル */
+  .lbl3d { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+  .lbl3d .l3 { position: absolute; left: 0; top: 0; font: 700 12px var(--mono); white-space: nowrap; padding: 1px 6px; border-radius: 6px; background: rgba(10,13,16,.6); border: 1px solid rgba(255,255,255,.08); color: #e6ebf1; }
+  .lbl3d .gold { color: #ffd166; } .lbl3d .tick { color: #c9d3df; font-weight: 400; font-size: 10px; padding: 0 3px; background: rgba(10,13,16,.5); }
+  .hud3d { position: absolute; left: 14px; bottom: 12px; z-index: 3; pointer-events: none; font: 12px var(--mono); color: #b4c0ce; background: rgba(10,13,16,.55); padding: 4px 9px; border-radius: 6px; }
+  .hud3d.right { left: auto; right: 14px; color: #ffd166; }
 </style>
 </head>
 <body>
 <main class="rv-main">
-  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <div class="rv-stage" id="stage"><div class="lbl3d" id="lbl3d"></div><div class="hud3d" id="hud3d"></div><div class="hud3d right" id="hud3d-r"></div></div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
@@ -132,7 +139,7 @@ RV.header({ id: 'c3', chap: '第3章', title: '振り子で重力を測れ', lib
   // この世界の g（隠し値）: レベルごとに乱数で決める
   const G_TRUE = LEVELS.map(() => +(9.0 + Math.random() * 1.6).toFixed(3));
 
-  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const stage = $('#stage');
   const kb = RV.kappaBadge(stage);
   const log = RV.causal('#causal');
   let level = 0, hPivot = 0.15, th0 = 5 * Math.PI / 180, speed = 1;
@@ -140,7 +147,6 @@ RV.header({ id: 'c3', chap: '第3章', title: '振り子で重力を測れ', lib
   let t = 0, crossings = [], prevTh = 0, measured = false, thSamples = [], trail = [];
   let recs = [[], [], []]; // レベルごとの計測記録 {h, th0, T}
   let gEst = null;
-  const view = { w: 800, h: 600, dpr: 1, s: 300, px: 400, py: 120 };
 
   // ---------- 物理 ----------
   function build() {
@@ -318,75 +324,26 @@ RV.header({ id: 'c3', chap: '第3章', title: '振り子で重力を測れ', lib
   }
 
   // ---------- 描画 ----------
-  function fit(w, h, dpr) {
-    view.w = w; view.h = h; view.dpr = dpr;
-    view.s = Math.min(w, h) * 0.58;
-    view.px = w / 2; view.py = h * 0.36;
-  }
-  const X = x => view.px + x * view.s, Y = y => view.py - y * view.s;
-
+  // ステージの描画は下の three.js モジュール（リアル3D）が担当。ここでは軌跡の記録と数値表示だけ
   function render() {
-    const { w, h, dpr } = view;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, w, h);
     if (!segs.length) return;
-    const rigid = LEVELS[level].k >= 1;
-    // 支持台
-    ctx.fillStyle = '#2b3542';
-    ctx.fillRect(X(-0.25), Y(0) - 6, 0.5 * view.s, 4);
     // 軌跡（下端）
     const last = segs[0];
     const tipLocal = [0, -(last.u1 - last.u0) / 2];
     const tip = [0, 0]; last.toWorldFrame(tip, tipLocal);
     if (state === 'swinging') { trail.push([tip[0], tip[1]]); if (trail.length > 240) trail.shift(); }
-    ctx.strokeStyle = 'rgba(255,209,102,.35)'; ctx.lineWidth = 1;
-    ctx.beginPath(); trail.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.stroke();
-    // 棒
-    for (const b of segs) {
-      const len = b.u1 - b.u0;
-      ctx.save();
-      ctx.translate(X(b.position[0]), Y(b.position[1]));
-      ctx.rotate(-b.angle);
-      ctx.fillStyle = rigid ? 'rgba(92,200,255,.35)' : 'rgba(255,122,69,.35)';
-      ctx.strokeStyle = rigid ? '#5cc8ff' : '#ff7a45';
-      ctx.lineWidth = 1.5;
-      const ww = Math.max(6, W * view.s);
-      ctx.fillRect(-ww / 2, -len / 2 * view.s, ww, len * view.s);
-      ctx.strokeRect(-ww / 2, -len / 2 * view.s, ww, len * view.s);
-      ctx.restore();
-    }
-    // 目盛り（剛体時のみ・静止時）
-    if (rigid && state !== 'swinging') {
-      ctx.fillStyle = '#8d9aab'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'left';
-      for (let u = -0.5; u <= 0.5001; u += 0.1) {
-        const p = [0, 0]; segs[0].toWorldFrame(p, [0, u]);
-        ctx.fillRect(X(p[0]) + 6, Y(p[1]), 6, 1);
-        ctx.fillText((u >= 0 ? '+' : '') + u.toFixed(1), X(p[0]) + 16, Y(p[1]) + 4);
-      }
-    }
-    // 重心
-    const c = cmAngle();
-    ctx.fillStyle = '#ffd166';
-    ctx.beginPath(); ctx.arc(X(c.x), Y(c.y), 5, 0, Math.PI * 2); ctx.fill();
-    ctx.font = '12px sans-serif'; ctx.fillText('G', X(c.x) + 8, Y(c.y) + 4);
-    // 軸
-    ctx.fillStyle = '#e6ebf1';
-    ctx.beginPath(); ctx.arc(X(0), Y(0), 6, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#0a0d10';
-    ctx.beginPath(); ctx.arc(X(0), Y(0), 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#e6ebf1'; ctx.fillText('O', X(0) - 18, Y(0) - 6);
-    // 鉛直線
-    ctx.strokeStyle = 'rgba(141,154,171,.3)'; ctx.setLineDash([3, 5]);
-    ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(0), Y(-0.9)); ctx.stroke(); ctx.setLineDash([]);
     // メーター
+    const c = cmAngle();
     $('#m-t').textContent = t.toFixed(2) + ' s';
     $('#m-th').textContent = (c.th * 180 / Math.PI).toFixed(1) + '°';
     $('#m-zc').textContent = `${Math.min(4, crossings.length)} / 4`;
     $('#m-I').textContent = inertiaAboutPivot().toFixed(4);
-    ctx.fillStyle = '#8d9aab'; ctx.font = '12px Consolas, monospace'; ctx.textAlign = 'left';
-    ctx.fillText(`h = ${hPivot.toFixed(3)} m   回りにくさ I（かたい棒の理論）= ${(IG + M * hPivot * hPivot).toFixed(4)} kg·m²`, 14, h - 14);
-    if (state === 'swinging' && speed > 1) ctx.fillText(`早送り ×${speed}`, w - 110, h - 14);
+    const ht = `h = ${hPivot.toFixed(3)} m   回りにくさ I（かたい棒の理論）= ${(IG + M * hPivot * hPivot).toFixed(4)} kg·m²`;
+    if (hud._t !== ht) { hud.textContent = ht; hud._t = ht; }
+    const hr = state === 'swinging' && speed > 1 ? `早送り ×${speed}` : '';
+    if (hudR._t !== hr) { hudR.textContent = hr; hudR._t = hr; hudR.style.display = hr ? '' : 'none'; }
   }
+  const hud = $('#hud3d'), hudR = $('#hud3d-r');
 
   // ---------- グラフ ----------
   let chT = null, chTh = null;
@@ -489,18 +446,8 @@ RV.header({ id: 'c3', chap: '第3章', title: '振り子で重力を測れ', lib
   $('#stop').addEventListener('click', idle);
   $('#calc').addEventListener('click', calcG);
   $('#clear').addEventListener('click', () => { recs[level] = []; gEst = null; $('#m-g').textContent = '—'; renderRecs(); updateTChart(); });
-  // 棒をクリックして軸位置を選ぶ（静止中のみ）
-  cv.addEventListener('click', e => {
-    if (state === 'swinging') return;
-    const r = cv.getBoundingClientRect();
-    const y = (view.py - (e.clientY - r.top)) / view.s; // 世界座標 y（軸=0）
-    const x = ((e.clientX - r.left) - view.px) / view.s;
-    // 静止時、棒の中心は y = −h。クリック点を新しい軸にする → 新 h = 旧 h + y
-    if (Math.abs(x) > 0.08 || y > 0.5 - hPivot || y < -0.5 - hPivot) return;
-    setH(+(hPivot + y).toFixed(3));
-  });
+  // 棒をクリックして軸位置を選ぶ処理は、3D モジュール側（レイキャスト）にある
 
-  RV.fitCanvas(cv, fit);
   initCharts();
   syncUI(); idle(); renderRecs();
   RV.loop(step, render, 1 / 240);
@@ -511,7 +458,10 @@ RV.header({ id: 'c3', chap: '第3章', title: '振り子で重力を測れ', lib
     get state() { return state; }, get measured() { return measured; }, get recs() { return recs[level]; }, get gEst() { return gEst; },
     gTrue: () => G_TRUE[level], setLevel, setH, release, calcG,
     setTh0(d) { th0 = d * Math.PI / 180; $('#th0').value = d; syncUI(); },
-    setSpeed(s) { speed = s; }
+    setSpeed(s) { speed = s; },
+    // 3D 描画モジュールが読む状態
+    get segs() { return segs; }, get h() { return hPivot; }, get trail() { return trail; }, get t() { return t; },
+    get crossings() { return crossings.length; }, get kappa() { return LEVELS[level].k; }, cm: cmAngle, L, W
   };
 
   RV.modal('第3章　振り子で重力を測れ',
@@ -521,6 +471,230 @@ RV.header({ id: 'c3', chap: '第3章', title: '振り子で重力を測れ', lib
      <p class="note">操作：h を選ぶ（スライダーか棒をクリック）→「振らせる」で棒が揺れ、3往復で周期を自動計測 → 2か所そろったら「g を算出」。</p>`,
     [{ label: 'はじめる', primary: true }]);
 })();
+</script>
+<script type="module">
+// ---------- リアル3D描画（three.js + shared/real3d.js） ----------
+// 物理（p2.js）は2Dのまま。軸 O を原点とする x, y を奥行き z=0 の鉛直面に写す
+import { createWorld, M, tex, THREE, kappaColor } from '../shared/real3d.js';
+const C3 = window.C3, $ = RV.$;
+const stage = $('#stage'), lbl = $('#lbl3d');
+const PY = 1.45;        // 軸 O の床からの高さ
+const VW = 0.036, VD = 0.012; // 見た目の棒の幅と厚み（物理の幅は 0.03）
+
+const W = await createWorld(stage, {
+  camera: [0.5, PY - 0.12, 3.25], target: [0, PY - 0.55, 0], fov: 36, groundSize: 40, bloom: 0.4,
+  exposure: 1.05, shadowBox: 3, background: 0x0d1218, sun: [2.5, 5, 3.5]
+});
+// 3D キャンバスはいちばん下に（κバッジやラベルを上に重ねる）
+const cvs = W.renderer.domElement;
+stage.insertBefore(cvs, stage.firstChild);
+cvs.style.position = 'absolute'; cvs.style.inset = '0';
+W.sun.target.position.set(0, PY - 0.6, 0);
+
+// 視点の回転は控えめに制限（振り子が正面に近い角度で見える範囲）
+const ctl = W.controls;
+ctl.target.set(0, PY - 0.55, 0);
+ctl.minPolarAngle = Math.PI * 0.30; ctl.maxPolarAngle = Math.PI * 0.56;
+ctl.minAzimuthAngle = -0.9; ctl.maxAzimuthAngle = 0.9;
+ctl.minDistance = 1.2; ctl.maxDistance = 6;
+ctl.update();
+const home = { cam: W.camera.position.clone(), tgt: ctl.target.clone() };
+cvs.addEventListener('dblclick', () => { W.camera.position.copy(home.cam); ctl.target.copy(home.tgt); }); // ダブルクリックで視点を戻す
+
+// ---------- 背景：実験室の奥の壁 ----------
+const wall = W.add(new THREE.Mesh(new THREE.PlaneGeometry(14, 6), new THREE.MeshStandardMaterial({ map: tex.concrete(5, [5, 2]), color: 0x8a939e, roughness: 0.95 })), { cast: false });
+wall.position.set(0, 3, -1.6);
+
+// ---------- 支持台（鋳鉄の台座 + 鋼の支柱 + 腕 + ナイフエッジ） ----------
+const paintDark = M.paint(0x2c3642, { roughness: 0.55 });
+const steel = M.steel();
+const stand = new THREE.Group(); W.scene.add(stand);
+const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.07, 0.62), paintDark); base.position.set(-0.05, 0.035, -0.12); stand.add(base);
+for (const [x, z] of [[-0.68, 0.12], [0.58, 0.12], [-0.68, -0.36], [0.58, -0.36]]) { // 水平調整ねじ
+  const f = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.03, 16), M.chrome()); f.position.set(x, 0.015, z); stand.add(f);
+}
+const post = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, PY + 0.2, 24), steel); post.position.set(-0.5, (PY + 0.2) / 2, -0.3); stand.add(post);
+// 支柱は振り子の左奥。L字の腕で軸の受け台まで伸ばす（腕は棒の振れる面より奥にあるのでぶつからない）
+const arm = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.23), paintDark); arm.position.set(-0.5, PY - 0.033, -0.185); stand.add(arm);
+const arm2 = new THREE.Mesh(new THREE.BoxGeometry(0.43, 0.04, 0.05), paintDark); arm2.position.set(-0.29, PY - 0.033, -0.075); stand.add(arm2);
+const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.08), paintDark); clamp.position.set(-0.5, PY - 0.033, -0.3); stand.add(clamp);
+// 腕の先の受け台：まん中に棒を通すすき間がある「ロの字」の枠（クロム）
+const yokeY = PY - 0.033, chrome = M.chrome({ roughness: 0.15 });
+for (const x of [-0.07, 0.07]) { const r = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.18), chrome); r.position.set(x, yokeY, 0); stand.add(r); }
+for (const z of [-0.07, 0.07]) { const r = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.012, 0.04), chrome); r.position.set(0, yokeY, z); stand.add(r); }
+// ナイフエッジ（三角柱、刃先が上）。棒の穴の上面が刃先 O に乗る
+const KR = 0.018;
+const knife = new THREE.Mesh(new THREE.CylinderGeometry(KR, KR, 0.16, 3, 1), M.steel({ roughness: 0.12 }));
+knife.rotation.x = -Math.PI / 2;
+knife.position.set(0, PY - KR, 0); stand.add(knife);
+W.shadow(stand);
+
+// ---------- 光電ゲート＋デジタル計時器 ----------
+const gate = new THREE.Group(); W.scene.add(gate);
+const gMat = M.plastic(0x1d2630, { roughness: 0.5 });
+const gL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.04), gMat); gL.position.set(0, 0, -0.07); gate.add(gL);
+const gR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.04), gMat); gR.position.set(0, 0, 0.07); gate.add(gR);
+const gB = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, 0.18), gMat); gB.position.set(0, -0.05, 0); gate.add(gB);
+const beamMat = new THREE.MeshBasicMaterial({ color: 0xff3344, transparent: true, opacity: 0.55 });
+const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.002, 0.002, 0.1, 6), beamMat); beam.rotation.x = Math.PI / 2; beam.position.y = 0.015; gate.add(beam);
+const led = new THREE.Mesh(new THREE.SphereGeometry(0.008, 12, 8), M.glow(0xff3344, 1)); led.position.set(0, 0.045, 0.07); gate.add(led);
+const gPole = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 1, 10), steel); gate.add(gPole);
+W.shadow(gate);
+// 計時器（台座の右側）：画面をキャンバスで描いてテクスチャに
+const lcdCv = document.createElement('canvas'); lcdCv.width = 512; lcdCv.height = 256;
+const lcdTex = new THREE.CanvasTexture(lcdCv); lcdTex.colorSpace = THREE.SRGBColorSpace;
+const timer = new THREE.Group(); W.scene.add(timer);
+const tBody = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.12), M.plastic(0x5d6672, { roughness: 0.45 })); timer.add(tBody);
+const lcd = new THREE.Mesh(new THREE.PlaneGeometry(0.27, 0.135), new THREE.MeshStandardMaterial({ map: lcdTex, color: 0x000000, emissive: 0xffffff, emissiveMap: lcdTex, emissiveIntensity: 0.75, roughness: 0.2 }));
+lcd.position.z = 0.0605; timer.add(lcd);
+timer.position.set(0.5, 0.07 + 0.08, 0.0); timer.rotation.y = -0.3;
+W.shadow(timer);
+let lcdKey = '';
+function drawLCD(tt, n, T) {
+  const key = tt.toFixed(2) + '|' + n + '|' + T;
+  if (key === lcdKey) return; lcdKey = key;
+  const g = lcdCv.getContext('2d');
+  g.fillStyle = '#0b1410'; g.fillRect(0, 0, 512, 256);
+  g.fillStyle = '#123022'; g.fillRect(10, 10, 492, 236);
+  g.fillStyle = '#7dffb0'; g.font = 'bold 30px Consolas, monospace'; g.textAlign = 'left';
+  g.fillText('TIME', 26, 50); g.fillText('PASS', 360, 50);
+  g.font = 'bold 80px Consolas, monospace';
+  g.fillText(tt.toFixed(2).padStart(6, ' '), 10, 140);
+  g.fillText(Math.min(4, n) + '/4', 360, 140);
+  g.font = 'bold 44px Consolas, monospace'; g.fillStyle = T ? '#ffd166' : '#4f8a68';
+  g.fillText('T = ' + (T || '--.----') + ' s', 26, 222);
+  lcdTex.needsUpdate = true;
+}
+
+// ---------- 棒（頂点を節の位置に合わせて曲げる直方体） ----------
+// 目盛りと穴を描いたテクスチャ（真鍮色は材質の色で掛け合わせる）
+const rodTex = tex.label((g, w, h) => {
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+  g.fillStyle = 'rgba(40,28,10,.85)';
+  for (let i = 0; i <= 100; i++) { // 1 cm ごとの目盛り（v=0 が下端 u=−0.5）
+    const y = h - i / 100 * h, big = i % 10 === 0, mid = i % 5 === 0;
+    g.fillRect(0, y - (big ? 2 : 1), big ? w * 0.42 : mid ? w * 0.3 : w * 0.18, big ? 4 : 2);
+  }
+  for (let i = 1; i < 20; i++) { // 5 cm ごとの穴（ナイフエッジを通す）
+    const y = h - i / 20 * h;
+    g.fillStyle = 'rgba(0,0,0,.92)'; g.beginPath(); g.ellipse(w * 0.7, y, w * 0.14, 5, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = 1.5; g.stroke();
+  }
+}, 64, 2048);
+// やわらかい棒用：10個の節の継ぎ目に濃い帯を描く
+const jointTex = tex.label((g, w, h) => {
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+  for (let i = 1; i < 10; i++) {
+    const y = h - i / 10 * h;
+    const gr = g.createLinearGradient(0, y - 14, 0, y + 14);
+    gr.addColorStop(0, 'rgba(60,20,5,0)'); gr.addColorStop(0.5, 'rgba(60,20,5,.75)'); gr.addColorStop(1, 'rgba(60,20,5,0)');
+    g.fillStyle = gr; g.fillRect(0, y - 14, w, 28);
+  }
+}, 32, 1024);
+const RSEG = 80;
+const rodGeo = new THREE.BoxGeometry(VW, 1, VD, 1, RSEG, 1);
+const rodBase = rodGeo.attributes.position.array.slice(); // 曲げる前の頂点（y = −0.5〜0.5 が棒の長さ方向）
+let rodMesh = null, rodKappa = null;
+function makeRodMat(k) {
+  if (k >= 1) return M.brass({ map: rodTex, roughness: 0.28 });
+  if (k > 0.2) return M.rubber(0xd2703c, { roughness: 0.55, map: jointTex }); // オレンジのシリコンゴム
+  return M.jelly(kappaColor(k).getHex(), { thickness: 0.05, attenuationDistance: 0.08 });
+}
+function updateRod(segs) {
+  const pos = rodGeo.attributes.position.array, n = segs.length;
+  for (let i = 0; i < pos.length; i += 3) {
+    const lx = rodBase[i], u = rodBase[i + 1], lz = rodBase[i + 2];
+    // u が入っている節をさがす（節の境目では両側が同じ点になるので、曲がっても切れない）
+    let b = segs[0];
+    if (n > 1) b = segs[Math.max(0, Math.min(n - 1, Math.floor((u + 0.5) / (1 / n))))];
+    const lu = u - (b.u0 + b.u1) / 2, c = Math.cos(b.angle), s = Math.sin(b.angle);
+    pos[i] = b.position[0] + lx * c - lu * s;
+    pos[i + 1] = b.position[1] + lx * s + lu * c + PY;
+    pos[i + 2] = lz;
+  }
+  rodGeo.attributes.position.needsUpdate = true;
+  rodGeo.computeVertexNormals();
+}
+rodMesh = new THREE.Mesh(rodGeo, makeRodMat(1)); rodMesh.frustumCulled = false;
+W.add(rodMesh);
+
+// ---------- 重心 G・鉛直線・軌跡 ----------
+const gDot = new THREE.Mesh(new THREE.SphereGeometry(0.014, 16, 12), M.glow(0xffd166, 3)); W.scene.add(gDot);
+const plumb = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, PY, -0.012), new THREE.Vector3(0, PY - 1.0, -0.012)]),
+  new THREE.LineDashedMaterial({ color: 0x8d9aab, dashSize: 0.02, gapSize: 0.025, transparent: true, opacity: 0.6 }));
+plumb.computeLineDistances(); W.scene.add(plumb);
+const TRN = 240;
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRN * 3), 3));
+const trailLine = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.55 }));
+trailLine.frustumCulled = false; W.scene.add(trailLine);
+
+// ---------- HTML ラベル ----------
+function mkLabel(cls) { const d = document.createElement('div'); d.className = 'l3 ' + (cls || ''); lbl.appendChild(d); return d; }
+const lbG = mkLabel('gold'), lbO = mkLabel(), ticks = [];
+for (let i = 0; i <= 10; i++) ticks.push(mkLabel('tick'));
+const _v = new THREE.Vector3();
+function place(el, x, y, z, text) {
+  const r = stage.getBoundingClientRect();
+  const s = W.toScreen(_v.set(x, y, z));
+  if (s.behind) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.style.transform = `translate(${(s.x - r.left).toFixed(1)}px, ${(s.y - r.top).toFixed(1)}px) translate(-50%, -50%)`;
+  if (text != null && el._t !== text) { el.textContent = text; el._t = text; }
+}
+
+// ---------- 棒をクリックして軸位置を選ぶ（静止中のみ・ドラッグは視点操作） ----------
+const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit = new THREE.Vector3();
+let down = null;
+cvs.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+cvs.addEventListener('pointerup', e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  if (C3.state === 'swinging') return;
+  const r = cvs.getBoundingClientRect();
+  ray.setFromCamera({ x: (e.clientX - r.left) / r.width * 2 - 1, y: -(e.clientY - r.top) / r.height * 2 + 1 }, W.camera);
+  if (!ray.ray.intersectPlane(plane, hit)) return;
+  const x = hit.x, y = hit.y - PY, h = C3.h; // 世界座標 y（軸=0）
+  // 静止時、棒の中心は y = −h。クリック点を新しい軸にする → 新 h = 旧 h + y
+  if (Math.abs(x) > 0.08 || y > 0.5 - h || y < -0.5 - h) return;
+  C3.setH(+(h + y).toFixed(3));
+});
+
+// ---------- 毎フレーム ----------
+let lastN = 0, flash = 0;
+W.onFrame((dt) => {
+  const segs = C3.segs; if (!segs.length) return;
+  const k = C3.kappa;
+  if (k !== rodKappa) { rodKappa = k; rodMesh.material.dispose(); rodMesh.material = makeRodMat(k); }
+  updateRod(segs);
+  const c = C3.cm();
+  gDot.position.set(c.x, c.y + PY, VD / 2 + 0.012);
+  // 軌跡
+  const tr = C3.trail, tp = trailGeo.attributes.position.array;
+  for (let i = 0; i < tr.length; i++) { tp[i * 3] = tr[i][0]; tp[i * 3 + 1] = tr[i][1] + PY; tp[i * 3 + 2] = 0; }
+  trailGeo.setDrawRange(0, tr.length); trailGeo.attributes.position.needsUpdate = true;
+  // 光電ゲートは、静止した棒の下端のすぐ下に置く（h に合わせて上下）
+  const yGate = PY - (0.5 + C3.h) - 0.02;
+  gate.position.set(0, yGate, 0);
+  gPole.scale.y = Math.max(0.05, yGate - 0.09); gPole.position.set(0, -0.06 - gPole.scale.y / 2, -0.07);
+  // 真下を通るたびに LED が光る
+  const n = C3.crossings;
+  if (n !== lastN) { if (n > lastN) flash = 1; lastN = n; }
+  flash = Math.max(0, flash - dt * 3);
+  led.material.emissiveIntensity = 0.6 + flash * 6;
+  beamMat.opacity = 0.35 + flash * 0.6;
+  const rec = C3.recs, last = rec.length ? rec[rec.length - 1] : null;
+  drawLCD(C3.t, n, C3.measured && last ? last.T.toFixed(4) : null);
+  // ラベル
+  place(lbG, c.x + 0.05, c.y + PY, 0, 'G');
+  place(lbO, 0.075, PY + 0.035, 0.02, 'O');
+  const showTicks = k >= 1 && C3.state !== 'swinging';
+  for (let i = 0; i <= 10; i++) {
+    if (!showTicks) { ticks[i].style.display = 'none'; continue; }
+    const u = -0.5 + i * 0.1, b = segs[0], cc = Math.cos(b.angle), ss = Math.sin(b.angle), lx = -0.055;
+    place(ticks[i], b.position[0] + lx * cc - u * ss, b.position[1] + lx * ss + u * cc + PY, 0, (u >= 0 ? '+' : '') + u.toFixed(1));
+  }
+});
+window.C3R = W; // テスト用
 </script>
 </body>
 </html>

@@ -1,7 +1,8 @@
 # 剛体消失 — Rigid Vanish
 
 **「剛体が世界から消えたら」** をテーマにした、ブラウザで遊ぶ物理シミュレーションゲームです。
-物理エンジンや数値計算の外部ライブラリを17種類使っています。
+物理エンジンや数値計算の外部ライブラリを16種類使っています。
+画面はすべて three.js によるリアルな3D描画です（HDRI の映り込み・影・ブルーム。共通部品は `shared/real3d.js`）。
 
 ▶ **プレイ:** https://issei8090-coder.github.io/rigid-vanish/
 
@@ -16,8 +17,8 @@
 
 | 章 | 内容 | 教科書の式 | ライブラリ |
 |---|---|---|---|
-| オープニング | 教科書から一行が消える物語と、剛体・κ・遊び方の紹介（はじめて開くとここから） | — | Zdog, GSAP, Tone.js |
-| ハブ | 剛体の定義を触って確かめる（自由度 3 → 2N） | 3.4 自由度 | d3-force |
+| オープニング | 夜の机で教科書から一行が消える物語と、剛体・κ・遊び方の紹介（トップを開くとここから） | — | three.js, GSAP, Tone.js |
+| ハブ | 金属球と棒の立体で剛体の定義を触って確かめる（自由度 3 → 2N） | 3.4 自由度 | d3-force |
 | 第1章 押した力が届かない | 押した力が、つながったブロックの反対側に届くまでの遅れ | 論文 原理4・5 | Rapier2D (WASM), Chart.js, Tone.js |
 | 第2章 転がれない円柱 | 斜面を転がる円柱 ẍ = ⅔ g sinα と、柔らかいタイヤ | (3-59)〜(3-67) | Planck.js, Chart.js |
 | 第3章 振り子で重力を測れ | 実体振り子・可逆振り子で g を測る | (3-37)〜(3-43) | p2.js, odex, Chart.js |
@@ -42,3 +43,9 @@ python -m http.server 8765     # その他: http://127.0.0.1:8765/ を開く
 
 - 小原「力学A 第3章 剛体」兵庫県立大学 講義テキスト — https://www.sci.u-hyogo.ac.jp/material/electro_phys/member/kohara/text3.pdf
 - 溝口理一郎・平嶋宗・堀口知也「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 — https://www.jstage.jst.go.jp/article/tjsai/31/4/31_A-F44/_pdf
+
+## 素材のクレジット
+
+- 観測者のロボット: RobotExpressive — Tomás Laulhé（Quaternius）作、Don McCurdy 改変、CC0 1.0（three.js examples より）
+- 環境光の HDRI: brown_photostudio_02 — Poly Haven、CC0
+- そのほかの木目・石・コンクリートなどのテクスチャは、ブラウザ上でプログラムから生成しています

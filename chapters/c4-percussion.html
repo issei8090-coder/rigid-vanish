@@ -8,10 +8,30 @@
 <script src="../shared/common.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<style>
+  #gl { position: absolute; inset: 0; }
+  /* 右上の v(t)・aω(t) グラフ */
+  #graph { position: absolute; top: 14px; right: 14px; width: 290px; height: 156px; z-index: 4; pointer-events: none;
+    border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+  .lbl3 { position: absolute; z-index: 4; transform: translate(0, -50%); pointer-events: none; white-space: nowrap;
+    font-size: 11.5px; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: rgba(13,17,22,.66); }
+  .lbl3.c { transform: translate(-50%, -100%); font-size: 12.5px; }
+  .lbl3.r { transform: translate(-100%, -50%); }
+  @media (max-width: 700px) { #graph { top: auto; bottom: 10px; right: 10px; left: 10px; width: auto; height: 130px; } }
+</style>
 </head>
 <body>
 <main class="rv-main">
-  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <div class="rv-stage" id="stage">
+    <div id="gl"></div>
+    <canvas id="graph"></canvas>
+    <div class="lbl3" id="g15" style="color:var(--good)">3a/2（円板）</div>
+    <div class="lbl3" id="g14" style="color:var(--warn)">7a/5（球）</div>
+    <div class="lbl3" id="g10" style="color:#8d9aab">重心</div>
+    <div class="lbl3 r" id="lblH" style="color:var(--fg)"></div>
+    <div class="lbl3 c" id="lblPocket" style="color:var(--warn)">ポケット</div>
+  </div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
@@ -89,12 +109,12 @@
   </aside>
 </main>
 
-<script>
-(function () {
-  'use strict';
+<script type="module">
+import { createWorld, THREE, M, tex, kappaColor } from '../shared/real3d.js';
+{
   RV.header({ id: 'c4', chap: '第4章', title: 'ボールのどこを突く？', libs: ['Matter.js', 'Tone.js'] });
   if (window.Tone) RV.libOk('Tone.js');
-  if (!window.Matter) { RV.libOk('Matter.js', false); return; }
+  if (!window.Matter) { RV.libOk('Matter.js', false); throw new Error('Matter.js を読み込めなかった'); }
   RV.libOk('Matter.js');
   const { Engine, Bodies, Body, Composite, Constraint } = Matter;
   const $ = s => document.querySelector(s);
@@ -111,11 +131,9 @@
   const FR = 0.02;               // Matter の friction 値（実効 μ は起動時に計測）
   const toPx = (x, y) => ({ x: x * S, y: GY - y * S });
 
-  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const stage = $('#stage');
   const kBadge = RV.kappaBadge(stage);
   const log = RV.causal('#causal');
-  let viewW = 800, viewH = 500, dpr = 1;
-  RV.fitCanvas(cv, (w, h, d) => { viewW = w; viewH = h; dpr = d; });
   const bodyFont = getComputedStyle(document.body).fontFamily;
 
   // ---------------- 世界の構築 ----------------
@@ -347,92 +365,235 @@
     ['#mV0', '#mW0', '#mV1', '#mTc', '#mVc', '#mLoss'].forEach(s => $(s).textContent = '—');
   }
 
-  // ---------------- 描画 ----------------
-  function render() {
-    const w = viewW, h = viewH;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    ctx.lineWidth = 1;
-    const x0 = -1.4, x1 = WALL_X + 0.4;
-    const sc = Math.min((w - 20) / (x1 - x0), h / 4.2);
-    const ox = 10 - x0 * sc, floorY = h * 0.72;
-    const X = x => ox + x * sc, Y = y => floorY - y * sc;
-    const fromPx = p => ({ x: X(p.x / S), y: Y((GY - p.y) / S) });
-    ctx.font = '11px ' + bodyFont;
+  // ---------------- 描画（three.js のリアル3D） ----------------
+  // 物理の x（右）・y（上）[m] をそのまま 3D の縦の面 z=0 に写す。ラシャ（台の布）の面が y=0。
+  const R3 = await createWorld($('#gl'), {
+    camera: [3, 2.5, 10], target: [3, 0.5, 0], fov: 34, background: 0x0d1218,
+    groundSize: 60, bloom: 0.4, sun: [7, 11, 8], shadowBox: 9, exposure: 1.05
+  });
+  R3.ground.position.y = -0.95;
+  R3.bloom.threshold = 0.92;     // にじむのはポケットの光だけにする
+  R3.sun.target.position.set(4, 0, 0);
+  const CT = R3.controls;
+  CT.enablePan = false;
+  CT.minAzimuthAngle = -0.8; CT.maxAzimuthAngle = 0.8;
+  CT.minPolarAngle = 0.5; CT.maxPolarAngle = 1.5;
 
-    // 床とポケット
-    ctx.fillStyle = '#1e2630';
-    ctx.fillRect(X(-1.1), Y(0), X(POCKET_X) - X(-1.1), 6);
-    ctx.fillRect(X(POCKET_X + POCKET_W), Y(0), X(WALL_X) - X(POCKET_X + POCKET_W), 6);
-    ctx.fillStyle = '#121820';
-    ctx.fillRect(X(POCKET_X), Y(0), X(POCKET_X + POCKET_W) - X(POCKET_X), POCKET_D * sc);
-    ctx.strokeStyle = '#ffd166'; ctx.setLineDash([4, 3]);
-    ctx.strokeRect(X(POCKET_X), Y(0), X(POCKET_X + POCKET_W) - X(POCKET_X), POCKET_D * sc);
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'center';
-    ctx.fillText('ポケット', X(POCKET_X + POCKET_W / 2), Y(-POCKET_D) + 16);
-    ctx.fillStyle = '#2b3542'; ctx.fillRect(X(WALL_X), Y(2), 0.2 * sc, 2 * sc);
-    ctx.fillStyle = '#56606c'; ctx.textAlign = 'left';
-    for (let m = 0; m <= 9; m++) { ctx.fillRect(X(m), Y(0) + 6, 1, 5); ctx.fillText(m + 'm', X(m) + 2, Y(0) + 20); }
+  // --- ビリヤード台（ポケットの所だけ布に穴があく） ---
+  const PZ = 0.66, TZ = 1.0, TX0 = -2.4, TX1 = WALL_X;   // 穴の半幅、台の半幅、台の左右端
+  const felt = M.cloth(0x0b4f30, { sheen: 0.5, sheenColor: new THREE.Color(0x2a7a4e), side: THREE.FrontSide });
+  const table = new THREE.Group();
+  const slab = (x0, x1, z0, z1) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.08, z1 - z0), felt);
+    m.position.set((x0 + x1) / 2, -0.04, (z0 + z1) / 2); table.add(m);
+  };
+  const PX0 = POCKET_X, PX1 = POCKET_X + POCKET_W;
+  slab(TX0, PX0, -TZ, TZ); slab(PX1, TX1, -TZ, TZ);
+  slab(PX0, PX1, -TZ, -PZ); slab(PX0, PX1, PZ, TZ);
+  // ポケットの中（革張りの箱）
+  const leather = new THREE.MeshStandardMaterial({ color: 0x241812, roughness: 0.7, side: THREE.DoubleSide });
+  const pw = (w, h, d, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), leather); m.position.set(x, y, z); table.add(m); };
+  pw(POCKET_W, 0.02, 2 * PZ, (PX0 + PX1) / 2, -POCKET_D - 0.01, 0);
+  pw(0.02, POCKET_D, 2 * PZ, PX0 - 0.01, -POCKET_D / 2, 0); pw(0.02, POCKET_D, 2 * PZ, PX1 + 0.01, -POCKET_D / 2, 0);
+  pw(POCKET_W, POCKET_D, 0.02, (PX0 + PX1) / 2, -POCKET_D / 2, -PZ - 0.01); pw(POCKET_W, POCKET_D, 0.02, (PX0 + PX1) / 2, -POCKET_D / 2, PZ + 0.01);
+  // 穴のふちを光らせる（ゴールの目印）
+  const rimMat = M.glow(0xffd166, 2.2);
+  const rimBar = (w, d, x, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.012, d), rimMat); m.position.set(x, 0.006, z); table.add(m); };
+  rimBar(POCKET_W + 0.06, 0.03, (PX0 + PX1) / 2, -PZ - 0.015); rimBar(POCKET_W + 0.06, 0.03, (PX0 + PX1) / 2, PZ + 0.015);
+  rimBar(0.03, 2 * PZ, PX0 - 0.015, 0); rimBar(0.03, 2 * PZ, PX1 + 0.015, 0);
+  const pocketLight = new THREE.PointLight(0xffc860, 1.2, 2.2, 2); pocketLight.position.set((PX0 + PX1) / 2, -0.25, 0); table.add(pocketLight);
+  // 木の枠（レール）とクッション
+  const railWood = M.wood({ base: '#5a3018', dark: '#2a1408', seed: 13 });
+  const box = (w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); table.add(m); return m; };
+  box(TX1 - TX0 + 0.5, 0.26, 0.25, (TX0 + TX1) / 2 + 0.0, 0.05, -TZ - 0.125, railWood);          // 奥のレール
+  box(TX1 - TX0 + 0.5, 0.12, 0.25, (TX0 + TX1) / 2 + 0.0, -0.02, TZ + 0.125, railWood);           // 手前のレール（低め）
+  box(0.25, 0.75, 2 * TZ + 0.5, TX1 + 0.325, 0.3, 0, railWood);                                    // 右端の壁（物理の壁 x=10）
+  box(0.25, 0.26, 2 * TZ + 0.5, TX0 - 0.125, 0.05, 0, railWood);
+  box(0.2, 0.6, 2 * TZ, TX1 + 0.1, 0.3, 0, felt);                                                   // 壁のクッション
+  // 台の側板（エプロン）と脚
+  const apron = new THREE.Mesh(new THREE.BoxGeometry(TX1 - TX0 + 0.5, 0.62, 2 * TZ + 0.5), railWood);
+  apron.position.set((TX0 + TX1) / 2, -0.39, 0);
+  // 側板は穴の部分も含めて外側だけ見せる：中身は見えないので箱のままでよいが、穴の下は空けておく
+  apron.geometry.translate(0, 0, 0);
+  const apronParts = [[TX0 - 0.25, PX0 - 0.03], [PX1 + 0.03, TX1 + 0.25]];
+  for (const [a0, a1] of apronParts) box(a1 - a0, 0.62, 2 * TZ + 0.5, (a0 + a1) / 2, -0.39, 0, railWood);
+  box(POCKET_W + 0.06, 0.62, TZ - PZ + 0.23, (PX0 + PX1) / 2, -0.39, (PZ + TZ + 0.25) / 2 + 0.01, railWood);
+  box(POCKET_W + 0.06, 0.62, TZ - PZ + 0.23, (PX0 + PX1) / 2, -0.39, -(PZ + TZ + 0.25) / 2 - 0.01, railWood);
+  box(POCKET_W + 0.06, 0.04, 2 * PZ, (PX0 + PX1) / 2, -0.68, 0, railWood);
+  const legGeo = new THREE.CylinderGeometry(0.12, 0.09, 0.3, 20);
+  for (const lx of [TX0 + 0.3, 3.2, TX1 - 0.2]) for (const lz of [-TZ, TZ]) { const l = new THREE.Mesh(legGeo, railWood); l.position.set(lx, -0.8, lz); table.add(l); }
+  // 手前の側板に貼った物差し（0〜9 m）
+  const RX0 = -1, RX1 = 10;
+  const rulerTex = tex.label((g, w, h) => {
+    g.fillStyle = '#e9dcb8'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#2a2116'; g.font = `700 ${h * 0.42}px ${bodyFont}`; g.textAlign = 'left';
+    const px = x => (x - RX0) / (RX1 - RX0) * w;
+    for (let m = 0; m <= 9; m++) {
+      for (let k = 0; k < 10 && m + k / 10 <= 9.95; k++) g.fillRect(px(m + k / 10), 0, k === 0 ? 4 : (k === 5 ? 3 : 2), k === 0 ? h * 0.5 : (k === 5 ? h * 0.32 : h * 0.2));
+      g.fillText(m + ' m', px(m) + 8, h * 0.9);
+    }
+    g.fillStyle = '#b8862b'; g.fillRect(px(POCKET_X), h * 0.55, px(PX1) - px(POCKET_X), h * 0.45);
+  }, 2048, 64);
+  const ruler = new THREE.Mesh(new THREE.PlaneGeometry(RX1 - RX0, 0.2), new THREE.MeshStandardMaterial({ map: rulerTex, color: 0xa79f8a, roughness: 0.8 }));
+  ruler.position.set((RX0 + RX1) / 2, -0.2, TZ + 0.252); table.add(ruler);
+  R3.add(table);
 
-    // ボール
+  // --- ボール（かたい：ストライプの 10 番ボール／やわらかい：ゼリーの 13 番） ---
+  function ballTex(stripe, num) {
+    return tex.label((g, w, h) => {
+      g.fillStyle = '#f4efe2'; g.fillRect(0, 0, w, h);
+      g.fillStyle = stripe; g.fillRect(0, h * 0.3, w, h * 0.4);
+      for (const u of [0.25, 0.75]) {
+        g.fillStyle = '#f4efe2'; g.beginPath(); g.ellipse(u * w, h / 2, h * 0.13, h * 0.13, 0, 0, 7); g.fill();
+        g.fillStyle = '#1b1b1b'; g.font = `700 ${h * 0.15}px ${bodyFont}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(num, u * w, h / 2 + h * 0.01);
+      }
+    }, 1024, 512);
+  }
+  const rigidMesh = new THREE.Mesh(new THREE.SphereGeometry(A, 64, 40),
+    M.plastic(0xd8d4cc, { map: ballTex('#1d5fbf', '10'), roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.06 }));
+  R3.add(rigidMesh);
+  const softGeo = new THREE.SphereGeometry(A, 48, 32);
+  const softMat = M.jelly(0xffb48a, { map: ballTex('#ff7a45', '13'), thickness: 0.8, attenuationDistance: 1.2, transmission: 0.55 });
+  const softMesh = new THREE.Mesh(softGeo, softMat);
+  softMesh.frustumCulled = false;
+  R3.add(softMesh);
+  // やわらかいボール：球の各頂点を「外周の粒（20個）」の位置に追従させて変形させる
+  const NR = 20, RP = 0.07;
+  const sp = softGeo.attributes.position, vMap = new Float32Array(sp.count * 5);
+  for (let v = 0; v < sp.count; v++) {
+    const x = sp.getX(v), y = sp.getY(v);
+    const th = (((-Math.atan2(y, x)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);   // Matter（y下向き）の角度
+    const fi = th / (2 * Math.PI) * NR, i0 = Math.floor(fi) % NR;
+    vMap.set([i0, (i0 + 1) % NR, fi - Math.floor(fi), Math.hypot(x, y) / A, sp.getZ(v)], v * 5);
+  }
+  const rdx = new Float32Array(NR), rdy = new Float32Array(NR), rlen = new Float32Array(NR);
+  function deformSoft() {
+    const c0 = parts[0].position, cx = c0.x / S, cy = (GY - c0.y) / S, k = A / (A - RP);
+    for (let i = 0; i < NR; i++) {
+      const p = parts[i + 1].position;
+      rdx[i] = (p.x / S - cx) * k; rdy[i] = ((GY - p.y) / S - cy) * k; rlen[i] = Math.hypot(rdx[i], rdy[i]);
+    }
+    for (let v = 0; v < sp.count; v++) {
+      const o = v * 5, i0 = vMap[o], i1 = vMap[o + 1], f = vMap[o + 2], rho = vMap[o + 3];
+      let lx = rdx[i0] * (1 - f) + rdx[i1] * f, ly = rdy[i0] * (1 - f) + rdy[i1] * f;
+      const s = (rlen[i0] * (1 - f) + rlen[i1] * f) / (Math.hypot(lx, ly) || 1);   // 弦ではなく弧でつなぐ
+      sp.setXYZ(v, cx + rho * lx * s, cy + rho * ly * s, vMap[o + 4]);
+    }
+    sp.needsUpdate = true;
+    softGeo.computeVertexNormals();
+  }
+
+  // --- キュー（先角・シャフト・バット） ---
+  const cue = new THREE.Group();
+  const cyl = (r0, r1, len, x0, mat) => {   // x0 から -x 方向へ len の長さ（先が細い）
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, len, 24).rotateZ(-Math.PI / 2), mat);
+    m.position.x = x0 - len / 2; cue.add(m); return m;
+  };
+  cyl(0.034, 0.034, 0.03, 0, M.rubber(0x3b6fb0, { roughness: 0.95 }));
+  cyl(0.035, 0.036, 0.08, -0.03, M.plastic(0xf3f0e8, { clearcoat: 0.3 }));
+  cyl(0.036, 0.055, 1.6, -0.11, M.wood({ base: '#b98d55', dark: '#8a6232', seed: 21, mat: { roughness: 0.45 } }));
+  cyl(0.055, 0.075, 1.1, -1.71, M.wood({ base: '#4a2814', dark: '#21100a', seed: 23, mat: { roughness: 0.3 } }));
+  cyl(0.068, 0.072, 0.4, -1.95, M.rubber(0x15171a));
+  cyl(0.076, 0.076, 0.04, -2.81, M.rubber(0x15171a));
+  R3.add(cue);
+
+  // --- 打点の高さガイド（破線）とラベル ---
+  const GL = 2 * A + 1.06;
+  const guides = [[1.5, 0x6fdc8c, '#g15', -8], [1.4, 0xffd166, '#g14', 0], [1.0, 0x8d9aab, '#g10', 0]].map(([g, col, id, dy]) => {
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(GL, 0, 0)]);
+    const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: col, dashSize: 0.06, gapSize: 0.06, transparent: true, opacity: 0.95, depthTest: false }));
+    line.computeLineDistances(); line.renderOrder = 5; R3.scene.add(line);
+    return { g, line, el: $(id), dy };
+  });
+
+  // --- 既定のカメラ：ボール・キュー・ポケットが収まる。ボールが進むと横に追いかける ---
+  let camX = 2.9;
+  const VIEW_DIR = new THREE.Vector3(0, 0.5, 1).normalize();
+  function frameCamera() {
+    const r = $('#gl').getBoundingClientRect();
+    const asp = Math.max(0.3, r.width / Math.max(1, r.height));
+    const vf = THREE.MathUtils.degToRad(R3.camera.fov), hf = 2 * Math.atan(Math.tan(vf / 2) * asp);
+    const d = Math.max(4.5 / Math.tan(hf / 2), 2.0 / Math.tan(vf / 2));
+    CT.target.set(camX, 0.3, 0);
+    R3.camera.position.copy(CT.target).addScaledVector(VIEW_DIR, d);
+    CT.minDistance = d * 0.3; CT.maxDistance = d * 1.4;
+    CT.update();
+  }
+  new ResizeObserver(frameCamera).observe($('#gl'));
+  frameCamera();
+
+  // HTML キャンバス（グラフ）の DPR 合わせ
+  const gcv = $('#graph'), gctx = gcv.getContext('2d');
+  let gW = 290, gH = 156, gDpr = 1;
+  new ResizeObserver(() => {
+    const r = gcv.getBoundingClientRect(); gDpr = Math.min(2, window.devicePixelRatio || 1);
+    gW = Math.max(1, r.width); gH = Math.max(1, r.height);
+    gcv.width = Math.round(gW * gDpr); gcv.height = Math.round(gH * gDpr);
+  }).observe(gcv);
+
+  const _p = new THREE.Vector3();
+  function place(el, x, y, z, dy = 0) {
+    const s = R3.toScreen(_p.set(x, y, z)), r = stage.getBoundingClientRect();
+    el.style.left = (s.x - r.left) + 'px'; el.style.top = (s.y - r.top + dy) + 'px';
+  }
+
+  function render(dt) {
+    // ---- ボール ----
+    rigidMesh.visible = !!ball; softMesh.visible = !ball && parts.length > 0;
     if (ball) {
-      const p = fromPx(ball.position), r = A * sc;
-      ctx.fillStyle = 'rgba(92,200,255,.18)'; ctx.strokeStyle = '#5cc8ff'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      ctx.lineWidth = 1.2;
-      for (let k = 0; k < 4; k++) {
-        const th = ball.angle + k * Math.PI / 2;
-        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(th) * r, p.y + Math.sin(th) * r); ctx.stroke();
-      }
-      ctx.fillStyle = '#ff7a45';
-      ctx.beginPath(); ctx.arc(p.x + Math.cos(ball.angle) * r * 0.8, p.y + Math.sin(ball.angle) * r * 0.8, 4, 0, Math.PI * 2); ctx.fill();
-    } else if (parts.length) {
-      const pts = parts.slice(1).map(b => fromPx(b.position));
-      ctx.fillStyle = 'rgba(255,122,69,.18)'; ctx.strokeStyle = '#ff7a45'; ctx.lineWidth = 2;
-      ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath(); ctx.fill(); ctx.stroke();
-      const c0 = fromPx(parts[0].position);
-      ctx.strokeStyle = 'rgba(255,122,69,.4)'; ctx.lineWidth = 1;
-      pts.forEach(q => { ctx.beginPath(); ctx.moveTo(c0.x, c0.y); ctx.lineTo(q.x, q.y); ctx.stroke(); });
-      ctx.fillStyle = '#ff7a45';
-      parts.forEach(b => { const q = fromPx(b.position); ctx.beginPath(); ctx.arc(q.x, q.y, 0.07 * sc, 0, Math.PI * 2); ctx.fill(); });
-    }
+      rigidMesh.position.set(ball.position.x / S, (GY - ball.position.y) / S, 0);
+      rigidMesh.rotation.set(0, 0, -ball.angle);       // Matter は y 下向きなので回る向きが逆
+    } else if (parts.length) deformSoft();
 
-    // 打点ガイドとキュー（撃つ前）
+    // ---- キューとガイド（撃つ前） ----
     const c = centroid();
-    const bx = X(c.x), by = Y(c.y), r = A * sc;
-    if (!shot || cueAnim > 0) {
-      const hr = shot ? shot.hr : hRatio();
-      const hy = Y(hr * A);
-      const guides = [[1.5, '#6fdc8c', '3a/2（円板）', -5], [1.4, '#ffd166', '7a/5（球）', 11], [1.0, '#56606c', '重心', 4]];
-      ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
-      for (const [g, col, lab, dy] of guides) {
-        ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(bx - r - 70, Y(g * A)); ctx.lineTo(bx + r + 6, Y(g * A)); ctx.stroke();
-        ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.fillText(lab, bx + r + 8, Y(g * A) + dy);
+    const showCue = !shot || cueAnim > 0;
+    cue.visible = showCue;
+    guides.forEach(gd => { gd.line.visible = showCue; gd.el.style.display = showCue ? '' : 'none'; });
+    $('#lblH').style.display = showCue ? '' : 'none';
+    if (showCue) {
+      const hr = shot ? shot.hr : hRatio(), hy = hr * A;
+      const back = shot ? (1 - cueAnim) * 0.45 : 0.22;
+      const tip = c.x - Math.sqrt(Math.max(0, A * A - (hy - c.y) ** 2)) - back;
+      cue.position.set(tip, hy, 0);
+      // ラベルは線の右端。近い線どうしは 17px 以上あけて重ならないようにする
+      let prevY = -1e9;
+      for (const gd of guides) {
+        gd.line.position.set(c.x - A - 1.0, gd.g * A, A + 0.02);
+        const s = R3.toScreen(_p.set(c.x + A + 0.1, gd.g * A, A + 0.02)), r = stage.getBoundingClientRect();
+        const y = Math.max(s.y - r.top + gd.dy, prevY + 17); prevY = y;
+        gd.el.style.left = (s.x - r.left) + 'px'; gd.el.style.top = y + 'px';
       }
-      ctx.setLineDash([]);
-      const back = shot ? (1 - cueAnim) * 30 : 18;
-      const tip = bx - Math.sqrt(Math.max(0, r * r - (hy - by) ** 2)) - back;
-      ctx.strokeStyle = '#d9b48a'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(tip - 160, hy); ctx.lineTo(tip, hy); ctx.stroke();
-      ctx.lineCap = 'butt';
-      ctx.fillStyle = '#e6ebf1'; ctx.textAlign = 'right';
-      ctx.textAlign = 'left';
-      ctx.fillText(`h = ${hr.toFixed(2)}a`, Math.max(4, tip - 160), hy - 10);
+      $('#lblH').textContent = `h = ${hr.toFixed(2)}a`;
+      place($('#lblH'), tip - 0.25, hy + 0.16, 0);
     }
+    $('#lblPocket').style.display = Math.abs(c.x - (PX0 + PX1) / 2) < 1.3 ? 'none' : '';   // ボールが近づいたら隠す
+    place($('#lblPocket'), (PX0 + PX1) / 2, 0.12, PZ + 0.2);
 
-    // 右上：v(t), aω(t) のグラフ
-    const narrow = w < 700;
-    const gx = narrow ? 10 : w - 300, gw = narrow ? w - 20 : 280;
-    const gy = narrow ? Y(-POCKET_D) + 28 : 14, gh = narrow ? Math.max(60, Math.min(150, h - gy - 8)) : 150;
-    ctx.fillStyle = 'rgba(16,21,27,.9)'; ctx.fillRect(gx, gy, gw, gh);
-    ctx.strokeStyle = '#2b3542'; ctx.strokeRect(gx, gy, gw, gh);
+    // ---- カメラの追従（ボールが右へ進んだら横にずらす。回転・ズームはそのまま） ----
+    const want = Math.max(2.9, Math.min(7.2, c.x + 1.7));
+    const dx = (want - camX) * Math.min(1, dt * 2.5);
+    if (Math.abs(dx) > 1e-5) { camX += dx; CT.target.x += dx; R3.camera.position.x += dx; }
+
+    drawGraph();
+    $('#mI').textContent = (momentOfInertia() / I0).toFixed(3);
+  }
+
+  // 右上：v(t), aω(t) のグラフ
+  function drawGraph() {
+    const ctx = gctx, gw = gW, gh = gH, gx = 0, gy = 0;
+    ctx.setTransform(gDpr, 0, 0, gDpr, 0, 0);
+    ctx.clearRect(0, 0, gw, gh);
+    ctx.font = '11px ' + bodyFont; ctx.lineWidth = 1;
+    ctx.fillStyle = 'rgba(13,17,22,.86)'; ctx.fillRect(gx, gy, gw, gh);
+    ctx.strokeStyle = '#334050'; ctx.strokeRect(gx + 0.5, gy + 0.5, gw - 1, gh - 1);
     ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
-    ctx.fillText('進む速さ 青 ／ 回る速さ 橙 ／ 破線＝計算', gx + 6, gy + 13);
-    if (!shot) { ctx.fillStyle = '#56606c'; ctx.fillText('突くと、ここに速さの変化が描かれる', gx + 6, gy + 34); }
+    ctx.fillText('進む速さ 青 ／ 回る速さ 橙 ／ 破線＝計算', gx + 8, gy + 15);
+    if (!shot) { ctx.fillStyle = '#56606c'; ctx.fillText('突くと、ここに速さの変化が描かれる', gx + 8, gy + 36); }
     if (shot && shot.rec.length) {
       const T = 2.0, Vm = Math.max(1, shot.v0 * 1.1, Math.abs(A * shot.w0) * 1.1);
-      const PX = t => gx + 6 + t / T * (gw - 12), PY = v => gy + gh - 8 - (v / Vm) * (gh - 28);
+      const PX = t => gx + 8 + t / T * (gw - 16), PY = v => gy + gh - 8 - (v / Vm) * (gh - 30);
       const line = (key, col, dash) => {
         ctx.strokeStyle = col; ctx.setLineDash(dash || []); ctx.lineWidth = 1.5; ctx.beginPath();
         let first = true;
@@ -449,13 +610,11 @@
       }
       if (!ball) {
         ctx.strokeStyle = '#6fdc8c'; ctx.lineWidth = 1; ctx.beginPath();
-        shot.rec.forEach((r2, i) => { if (r2.t > T) return; const q = [PX(r2.t), gy + gh - 8 - (r2.I - 0.5) * (gh - 28)]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); });
+        shot.rec.forEach((r2, i) => { if (r2.t > T) return; const q = [PX(r2.t), gy + gh - 8 - (r2.I - 0.5) * (gh - 30)]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); });
         ctx.stroke();
-        ctx.fillStyle = '#6fdc8c'; ctx.fillText('緑＝回りにくさ', gx + gw - 90, gy + 13);
+        ctx.fillStyle = '#6fdc8c'; ctx.textAlign = 'right'; ctx.fillText('緑＝回りにくさ', gx + gw - 8, gy + 30);
       }
     }
-
-    $('#mI').textContent = (momentOfInertia() / I0).toFixed(3);
   }
 
   // ---------------- UI ----------------
@@ -469,16 +628,19 @@
   window.addEventListener('keydown', e => {
     if (e.code === 'Space' && !document.querySelector('.rv-modal-bg')) { e.preventDefault(); shoot(); }
   });
+  // ステージ上でポインタを上下に動かすと h が変わる（ボタンを押していない時だけ。ドラッグは視点の回転）
+  const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hitP = new THREE.Vector3();
   stage.addEventListener('pointermove', e => {
-    if (shot) return;
-    const rect = cv.getBoundingClientRect();
-    const sc = Math.min((viewW - 20) / (WALL_X + 0.4 + 1.4), viewH / 4.2);
-    const floorY = viewH * 0.72;
-    const hr = (floorY - (e.clientY - rect.top)) / sc / A;
-    if (hr >= 0.2 && hr <= 1.9) { $('#hS').value = hr.toFixed(2); updLabels(); }
+    if (shot || e.buttons) return;
+    const r = R3.renderer.domElement.getBoundingClientRect();
+    ray.setFromCamera({ x: (e.clientX - r.left) / r.width * 2 - 1, y: -(e.clientY - r.top) / r.height * 2 + 1 }, R3.camera);
+    if (!ray.ray.intersectPlane(plane, hitP)) return;
+    const hr = hitP.y / A;
+    if (hr >= 0.2 && hr <= 1.9 && Math.abs(hitP.x - centroid().x) < 3) { $('#hS').value = hr.toFixed(2); updLabels(); }
   });
   function setLevel(k) {
     kappa = k; kBadge.set(k);
+    softMat.color.copy(kappaColor(k)).lerp(new THREE.Color(0xffffff), 0.45);
     document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
     $('#levelNote').textContent = k >= 0.999
       ? 'かたいボール（円板）。形が変わらないので、回りにくさも一定。'
@@ -491,7 +653,8 @@
   $('#mMu').textContent = muEff.toFixed(3);
   RV.rulesList('#rules', [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   setLevel(1);
-  RV.loop(step, render, 1 / FPS);
+  RV.loop(step, () => {}, 1 / FPS);
+  R3.onFrame(render);
 
   window.__c4 = {
     get state() { return { simT, done, shot: shot && { v0: shot.v0, w0: shot.w0, tc: shot.tc, vc: shot.vc, loss: shot.loss, meas0: shot.meas0 }, c: centroid(), muEff, kappa }; },
@@ -504,7 +667,7 @@
      <p><b>やること：</b>1回だけ突いて、ボールを 5 m 先の穴に落とせ。床でこすれるむだが少ないほど★が増える。</p>
      <p class="note">操作：「打点の高さ h」で突く高さ、「突く強さ」で力を決めて「突く」（または Space）。緑の線（半径の1.5倍）あたりを突くと滑らずに転がる。Lv2・Lv3 ではボールがやわらかくなる。</p>`,
     [{ label: 'はじめる', primary: true }]);
-})();
+}
 </script>
 </body>
 </html>
