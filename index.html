@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剛体消失</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="shared/common.css">
+<style>
+  .hub { display: grid; grid-template-columns: minmax(0, 1fr) 420px; min-height: 100vh; }
+  .hub-left { position: relative; overflow: hidden; background: radial-gradient(ellipse at 40% 40%, #141b24 0%, #0a0d10 70%); }
+  #graph { width: 100%; height: 100%; display: block; touch-action: none; }
+  .hub-title { position: absolute; left: 24px; top: 20px; z-index: 2; pointer-events: none; max-width: 560px; }
+  .hub-title h1 { font-size: 40px; margin: 0; letter-spacing: .08em; }
+  .hub-title h1 span { color: var(--accent); }
+  .hub-title p { color: var(--muted); margin: 6px 0 0; }
+  .hub-ctrl {
+    position: absolute; left: 24px; bottom: 20px; z-index: 2; width: min(420px, calc(100% - 48px));
+    background: rgba(27,34,43,.9); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+  }
+  .hub-ctrl .meters { grid-template-columns: repeat(3, 1fr); margin-top: 6px; }
+  .hub-right { border-left: 1px solid var(--line); background: var(--bg2); padding: 18px; overflow-y: auto; max-height: 100vh; }
+  .hub-right h2 { font-size: 13px; color: var(--muted); letter-spacing: .08em; margin: 18px 0 8px; }
+  .story { font-size: 14px; }
+  .story em { color: var(--accent); font-style: normal; }
+  .card {
+    display: grid; grid-template-columns: 54px 1fr auto; gap: 10px; align-items: center;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px;
+    text-decoration: none; color: var(--fg); background: var(--panel); transition: border-color .15s, transform .15s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateX(2px); }
+  .card .no { font-family: var(--mono); color: var(--accent); font-size: 12px; }
+  .card .ttl { font-weight: 700; }
+  .card .sub { font-size: 12px; color: var(--muted); }
+  .card .libs { font-family: var(--mono); font-size: 10.5px; color: #6f8fa8; margin-top: 2px; }
+  .card .st { color: var(--warn); font-size: 13px; letter-spacing: 1px; }
+  .total { font-family: var(--mono); color: var(--warn); }
+  @media (max-width: 900px) {
+    .hub { grid-template-columns: 1fr; }
+    .hub-left { height: 72vh; }
+    .hub-title h1 { font-size: 28px; }
+    .hub-right { border-left: 0; border-top: 1px solid var(--line); max-height: none; }
+  }
+</style>
+</head>
+<body>
+<div class="hub">
+  <div class="hub-left">
+    <div class="hub-title">
+      <h1>剛体<span>消失</span></h1>
+      <p>任意の2質点間の距離が、もう一定ではない世界で。</p>
+    </div>
+    <svg id="graph" aria-label="剛体の定義を確かめる質点系"></svg>
+    <div class="hub-ctrl">
+      <div class="row">
+        <label for="k">世界の剛性 κ</label>
+        <input type="range" id="k" min="0" max="1" step="0.01" value="1">
+        <span class="val" id="kv">1.00</span>
+      </div>
+      <div class="note">点をドラッグして揺さぶってみてください。κ=1 では三角形 PQR の辺の長さが保たれ、κ を下げると形が崩れます。</div>
+      <div class="meters">
+        <div class="meter"><div class="k">自由度</div><div class="v" id="dof">3</div></div>
+        <div class="meter"><div class="k">距離ばらつき</div><div class="v" id="dev">0.0%</div></div>
+        <div class="meter"><div class="k">状態</div><div class="v" id="state" style="font-size:13px">剛体</div></div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="hub-right">
+    <div class="story">
+      <p>ある朝、物理学の教科書から一行が消えた。</p>
+      <p><em>「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」</em>──剛体の定義である。</p>
+      <p>それ以来、力は一瞬では伝わらなくなり、慣性モーメントは定まらず、こまは裂け、振り子は重力加速度を測れなくなった。あなたは最後の観測者として、崩れていく世界の物理を確かめにいく。</p>
+    </div>
+
+    <h2>章 <span class="total" id="total"></span></h2>
+    <div id="cards"></div>
+
+    <h2>参考文献</h2>
+    <p class="ref">
+      小原「力学A 第3章 剛体」兵庫県立大学 講義テキスト（剛体の定義、自由度6、慣性モーメント、実体振り子、斜面を転がる円柱、撃力と打撃の中心、こまの歳差）<br>
+      <a href="https://www.sci.u-hyogo.ac.jp/material/electro_phys/member/kohara/text3.pdf" target="_blank" rel="noopener">text3.pdf</a><br><br>
+      溝口理一郎・平嶋宗・堀口知也「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016（作用反作用の因果、透過伝達性、大局的因果性、場の力としての遠心力）<br>
+      <a href="https://www.jstage.jst.go.jp/article/tjsai/31/4/31_A-F44/_pdf" target="_blank" rel="noopener">J-STAGE</a>
+    </p>
+    <h2>使用ライブラリ</h2>
+    <p class="ref" id="libs-all"></p>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="shared/common.js"></script>
+<script>
+(function () {
+  'use strict';
+  const CHAPTERS = [
+    { id: 'c1', no: '第1章', href: 'chapters/c1-propagation.html', t: '透過伝達性の喪失', s: '押した力が、向こう端に届くまで', libs: 'Rapier2D · Chart.js · Tone.js' },
+    { id: 'c2', no: '第2章', href: 'chapters/c2-rolling.html', t: '転がれない円柱', s: '加速度 ⅔g sinα が崩れるとき', libs: 'Planck.js · Chart.js' },
+    { id: 'c3', no: '第3章', href: 'chapters/c3-pendulum.html', t: '可逆振り子で g を測れ', s: 'I が一定でない振り子', libs: 'p2.js · odex · Chart.js' },
+    { id: 'c4', no: '第4章', href: 'chapters/c4-percussion.html', t: '打撃の中心', s: '撞く高さ h = 3a/2 の意味', libs: 'Matter.js' },
+    { id: 'c5', no: '第5章', href: 'chapters/c5-top.html', t: 'こまは倒れる', s: '歳差運動と、遠心力で裂けるこま', libs: 'three.js · cannon-es · odex' },
+    { id: 'c6', no: '第6章', href: 'chapters/c6-tofu.html', t: '豆腐を100Nで押せ', s: '反作用には根拠がいる', libs: 'three.js · Ammo.js (Bullet)' },
+    { id: 'c7', no: '終章', href: 'chapters/c7-zero.html', t: '剛体ゼロ', s: '最後の剛体を融ける前に運べ', libs: 'LiquidFun · gpu.js' },
+    { id: 'lab', no: '実験室', href: 'chapters/lab-engines.html', t: 'エンジン総当たり', s: '6つの物理エンジンの「剛体観」を比べる', libs: 'Matter · Planck · p2 · Rapier · toxiclibs · Oimo' }
+  ];
+  const prog = RV.loadProgress();
+  let total = 0;
+  document.getElementById('cards').innerHTML = CHAPTERS.map(c => {
+    const n = prog[c.id] || 0; total += n;
+    return `<a class="card" href="${c.href}"><span class="no">${c.no}</span>` +
+      `<span><div class="ttl">${c.t}</div><div class="sub">${c.s}</div><div class="libs">${c.libs}</div></span>` +
+      `<span class="st">${'★'.repeat(n)}${'☆'.repeat(3 - n)}</span></a>`;
+  }).join('');
+  document.getElementById('total').textContent = `★ ${total} / ${CHAPTERS.length * 3}`;
+  document.getElementById('libs-all').textContent =
+    'Matter.js 0.19 / Planck.js 1.0 / p2.js 0.7.1 / Rapier2D 0.14 (WASM) / cannon-es 0.20 / Ammo.js (Bullet, WASM) / Oimo.js 1.0.9 / LiquidFun (WASM) / toxiclibs.js 0.3.3 / three.js 0.160 / d3 7.9 / Chart.js 4.4 / Tone.js 14.7 / odex 3.0 / gpu.js 2.16';
+
+  // ---------- d3-force による「剛体の定義」 ----------
+  // 教科書 図3-4: △PQR を決めれば 4 番目以降の点は一意に決まり、自由度は増えない。
+  // ここでは全ペアにリンク（距離拘束）を張る。κ=1 ではリンクを強く何度も解いて距離を保ち（剛体）、
+  // κ を下げるとリンクが弱まり質点系の自由度 2N が顔を出す。
+  const svg = d3.select('#graph');
+  const W = () => svg.node().clientWidth, H = () => svg.node().clientHeight;
+  const labels = ['P', 'Q', 'R', 'S', 'T', 'U', 'V'];
+  const R0 = Math.max(110, Math.min(180, (window.innerWidth - 420) * 0.16));
+  const nodes = labels.map((id, i) => {
+    const a = i === 0 ? 0 : (i - 1) / (labels.length - 1) * Math.PI * 2;
+    const r = i === 0 ? 0 : R0 * (i % 2 ? 1 : 0.62);
+    return { id, x0: Math.cos(a) * r, y0: Math.sin(a) * r };
+  });
+  const links = [];
+  for (let i = 0; i < nodes.length; i++)
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      links.push({ source: a.id, target: b.id, d0: Math.hypot(a.x0 - b.x0, a.y0 - b.y0), tri: i < 3 && j < 3 });
+    }
+
+  const g = svg.append('g');
+  const linkSel = g.selectAll('line').data(links).join('line')
+    .attr('stroke-width', d => d.tri ? 2.5 : 1)
+    .attr('stroke-linecap', 'round');
+  const nodeSel = g.selectAll('g.n').data(nodes).join('g').attr('class', 'n').style('cursor', 'grab');
+  nodeSel.append('circle').attr('r', d => d.id === 'P' || d.id === 'Q' || d.id === 'R' ? 11 : 8)
+    .attr('fill', '#1b222b').attr('stroke-width', 2);
+  nodeSel.append('text').text(d => d.id).attr('text-anchor', 'middle').attr('dy', '0.35em')
+    .attr('font-size', 11).attr('fill', '#e6ebf1').attr('font-family', 'Consolas, monospace').style('pointer-events', 'none');
+
+  let kappa = 1;
+  const linkForce = d3.forceLink(links).id(d => d.id).distance(d => d.d0);
+  const sim = d3.forceSimulation(nodes)
+    .force('link', linkForce)
+    .force('center', d3.forceCenter(0, 0).strength(0.02))
+    .force('collide', d3.forceCollide(10))
+    .alphaDecay(0)          // 常に動かし続ける
+    .velocityDecay(0.25);
+
+  // 世界のゆらぎ（κが下がるほど熱運動が効いてくる）
+  sim.force('jitter', alpha => {
+    const amp = (1 - kappa) * 0.9;
+    for (const n of nodes) { n.vx += (Math.random() - 0.5) * amp; n.vy += (Math.random() - 0.5) * amp; }
+  });
+  // 重力（下向き）を少し。剛体なら全体として落ちず中心力で留まる
+  sim.force('y', d3.forceY(0).strength(0.01));
+
+  function applyKappa(k) {
+    kappa = k;
+    // κ=1: strength 1, iterations 30（ほぼ厳密な距離拘束） / κ→0: 弱いばね
+    linkForce.strength(0.002 + 0.998 * Math.pow(k, 3)).iterations(k > 0.98 ? 30 : 1 + Math.round(k * 6));
+    document.getElementById('kv').textContent = k.toFixed(2);
+    sim.alpha(0.6);
+  }
+
+  // ドラッグ
+  nodeSel.call(d3.drag()
+    .on('start', (e, d) => { d.fx = d.x; d.fy = d.y; })
+    .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+    .on('end', (e, d) => { d.fx = null; d.fy = null; }));
+
+  const color = d3.interpolateRgb('#ff7a45', '#5cc8ff');
+  sim.on('tick', () => {
+    const cx = W() * 0.5, cy = H() * 0.52;
+    g.attr('transform', `translate(${cx},${cy})`);
+    let devSum = 0, devMax = 0;
+    linkSel.each(function (d) {
+      const L = Math.hypot(d.source.x - d.target.x, d.source.y - d.target.y);
+      const e = Math.abs(L - d.d0) / d.d0;
+      devSum += e; devMax = Math.max(devMax, e);
+      d3.select(this)
+        .attr('x1', d.source.x).attr('y1', d.source.y).attr('x2', d.target.x).attr('y2', d.target.y)
+        .attr('stroke', color(Math.max(0, 1 - e * 8)))
+        .attr('stroke-opacity', d.tri ? 0.95 : 0.35 + 0.4 * kappa);
+    });
+    nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+    nodeSel.select('circle').attr('stroke', color(kappa));
+    const mean = devSum / links.length;
+    const rigid = devMax < 0.02;
+    document.getElementById('dev').textContent = (mean * 100).toFixed(1) + '%';
+    // 2D: 剛体なら自由度3（並進2+回転1）。崩れたら 2N。
+    document.getElementById('dof').textContent = rigid ? '3' : String(2 * nodes.length);
+    const st = document.getElementById('state');
+    st.textContent = rigid ? '剛体' : devMax < 0.15 ? '弾性体' : '質点系';
+    st.style.color = rigid ? 'var(--rigid)' : 'var(--accent)';
+  });
+
+  // 初期配置
+  nodes.forEach(n => { n.x = n.x0; n.y = n.y0; });
+  document.getElementById('k').addEventListener('input', e => applyKappa(+e.target.value));
+  applyKappa(1);
+
+  // 最初の訪問ではゆっくり κ が落ちる演出（操作すれば止まる）
+  let auto = !prog.__seen;
+  try { const p = RV.loadProgress(); p.__seen = 1; localStorage.setItem('rigid-vanish-progress-v1', JSON.stringify(p)); } catch (e) { }
+  if (auto) {
+    const t0 = performance.now();
+    const stop = () => { auto = false; };
+    document.getElementById('k').addEventListener('pointerdown', stop, { once: true });
+    (function drift(now) {
+      if (!auto) return;
+      const k = Math.max(0.25, 1 - (now - t0) / 9000);
+      document.getElementById('k').value = k;
+      applyKappa(k);
+      if (k > 0.25) requestAnimationFrame(drift);
+    })(t0);
+  }
+})();
+</script>
+</body>
+</html>

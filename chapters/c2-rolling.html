@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>転がれない円柱</title>
+<link rel="stylesheet" href="../shared/common.css">
+<style>
+  #chart-wrap { position: relative; height: 170px; }
+  .ebar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; background: #121820; margin: 4px 0; }
+  .ebar i { display: block; height: 100%; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; background: var(--c); vertical-align: -1px; }
+</style>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション</h2>
+      <p>斜面の角度 <b>α</b> と摩擦係数 <b>μ</b> を決めて円柱を放ち、砂地の<b>目標ゾーン</b>（緑）の中で止めよ。</p>
+      <p class="note">止まった位置が中心に近いほど★が増える。レベルが上がると円柱が「剛体でなくなる」。</p>
+    </div>
+    <div class="panel">
+      <h2>レベル（剛性 κ）</h2>
+      <div class="seg" id="levels">
+        <button data-l="0" class="on">L1 κ=1.00</button><button data-l="1">L2 κ=0.35</button><button data-l="2">L3 κ=0.08</button>
+      </div>
+      <p class="note" id="lvl-note"></p>
+    </div>
+    <div class="panel">
+      <h2>操作</h2>
+      <div class="row"><label>斜面角 α</label><input type="range" id="alpha" min="8" max="60" step="0.5" value="25"><span class="val" id="alpha-v"></span></div>
+      <div class="row"><label>摩擦 μ</label><input type="range" id="mu" min="0.05" max="1" step="0.01" value="0.5"><span class="val" id="mu-v"></span></div>
+      <p class="note" id="slipnote"></p>
+      <div class="btns">
+        <button class="btn primary" id="go">放つ</button>
+        <button class="btn" id="reset">置き直す</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">経過時間 t</div><div class="v" id="m-t">0.00 s</div></div>
+        <div class="meter"><div class="k">中心の速さ v</div><div class="v" id="m-v">0.00 m/s</div></div>
+        <div class="meter"><div class="k">斜面での加速度（実測）</div><div class="v" id="m-a">—</div></div>
+        <div class="meter"><div class="k">理論 (2/3)g sinα</div><div class="v" id="m-at">—</div></div>
+        <div class="meter"><div class="k">滑り速度 u</div><div class="v" id="m-u">—</div></div>
+        <div class="meter"><div class="k">停止位置（砂地から）</div><div class="v" id="m-stop">—</div></div>
+      </div>
+      <p class="note" style="margin-top:8px">斜面下端でのエネルギー配分（失った位置エネルギーに対する割合）</p>
+      <div class="ebar" id="ebar"><i style="background:#5cc8ff;width:0"></i><i style="background:#c792ea;width:0"></i><i style="background:#ff7a45;width:0"></i></div>
+      <div class="legend"><span style="--c:#5cc8ff" id="lg-t">並進 —</span><span style="--c:#c792ea" id="lg-r">回転・内部 —</span><span style="--c:#ff7a45" id="lg-d">散逸 —</span></div>
+      <p class="note">剛体・滑りなしなら 並進 2/3 : 回転 1/3（教科書 式3-64 の後）。</p>
+    </div>
+    <div class="panel">
+      <h2>斜面上の移動距離 s(t)</h2>
+      <div id="chart-wrap"><canvas id="chart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>因果ログ</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>理論（剛体の平面運動）</h2>
+<div class="formula">滑らない (tanα &lt; 3μ0)  … (3-65)
+  M ẍ = Mg sinα − F,  I ω̇ = aF,  I = Ma²/2   (3-59)
+  ẍ = (2/3) g sinα                         (3-62)
+  x = (1/3) g t² sinα                      (3-63)
+  F = (1/3) Mg sinα
+滑りつつ転がる (tanα &gt; 3μ0)
+  ẍ = g(sinα − μ cosα),  ω̇ = 2μg cosα / a  (3-66)
+  u = ẋ − aω = gt(sinα − 3μ cosα)          (3-67)</div>
+      <p class="note">κ&lt;1 の円柱は外周の小円16個と中心を「ばね（DistanceJoint）」で結んだもの。2点間の距離が一定でない＝剛体ではない。</p>
+    </div>
+    <p class="ref">参照: 兵庫県立大 物理学テキスト第3章「剛体」3.7 剛体の平面運動 / 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016</p>
+  </aside>
+</main>
+
+<script src="../shared/common.js"></script>
+<script>
+RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['Planck.js', 'Chart.js', 'Tone.js'] });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js" onload="RV.libOk('Tone.js')" onerror="RV.libOk('Tone.js',false)"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" onload="RV.libOk('Chart.js')" onerror="RV.libOk('Chart.js',false)"></script>
+<script src="https://cdn.jsdelivr.net/npm/planck@1.0.0/dist/planck.min.js" onload="RV.libOk('Planck.js')" onerror="RV.libOk('Planck.js',false)"></script>
+<script>
+(function () {
+  'use strict';
+  const { Vec2 } = planck;
+  const $ = RV.$;
+  const G = 9.8, S = 5, A = 0.5, CRR = 0.25, SAND_LEN = 16, ARC_R = 2, START_S = 0.4;
+  const HALF_ZONE = 0.6;
+  const LEVELS = [
+    { k: 1.00, target: 9.0, note: '剛体の円柱。教科書どおり、エネルギーの1/3が回転に回る。' },
+    { k: 0.35, target: 7.5, note: '少し柔らかいタイヤ。変形するたびにエネルギーが熱に消える。' },
+    { k: 0.08, target: 7.2, note: 'ほぼ「剛体が消えた」タイヤ。形を保つことすら難しい。' }
+  ];
+
+  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const kb = RV.kappaBadge(stage);
+  const log = RV.causal('#causal');
+  let level = 0, alphaDeg = 25, mu = 0.5;
+  let world, ground, hub, bodies = [], geom = null;
+  let state = 'ready'; // ready | running | done
+  let t = 0, still = 0, flags = {}, samples = [], attempts = 0;
+  let view = { s: 40, ox: 0, oy: 0, w: 800, h: 500, dpr: 1 };
+  let stopX = null, bottomInfo = null;
+
+  // ---------- コース ----------
+  function buildGeom() {
+    const al = alphaDeg * Math.PI / 180;
+    const H = S * Math.sin(al), X0 = S * Math.cos(al);
+    const tArc = ARC_R * Math.tan(al / 2);
+    const verts = [Vec2(-0.6 * Math.cos(al), H + 0.6 * Math.sin(al)), Vec2(0, H)];
+    verts.push(Vec2(X0 - tArc * Math.cos(al), tArc * Math.sin(al)));
+    const C = Vec2(X0 + tArc, ARC_R);
+    const n = 12;
+    for (let i = 1; i <= n; i++) {
+      const th = -Math.PI / 2 - al * (1 - i / n);
+      verts.push(Vec2(C.x + ARC_R * Math.cos(th), C.y + ARC_R * Math.sin(th)));
+    }
+    const flat0 = X0 + tArc;
+    const sand0 = flat0 + 1;
+    const xEnd = sand0 + SAND_LEN + 0.5;
+    verts.push(Vec2(xEnd, 0), Vec2(xEnd, 1.2));
+    return { al, H, X0, tArc, flat0, sand0, xEnd, verts };
+  }
+
+  function build() {
+    geom = buildGeom();
+    world = new planck.World({ gravity: Vec2(0, -G) });
+    ground = world.createBody();
+    ground.createFixture(planck.Chain(geom.verts, false), { friction: mu });
+    const al = geom.al;
+    const start = Vec2(START_S * Math.cos(al) + A * Math.sin(al), geom.H - START_S * Math.sin(al) + A * Math.cos(al));
+    const k = LEVELS[level].k;
+    bodies = [];
+    if (k >= 1) {
+      hub = world.createBody({ type: 'dynamic', position: start });
+      hub.createFixture(planck.Circle(A), { density: 1, friction: mu });
+      bodies = [hub];
+    } else {
+      // ソフトタイヤ: 外周 N 個の小円 + 中心。距離拘束をばね化（frequencyHz ∝ κ）
+      const N = 16, rs = 0.09, f = 1 + k * 20;
+      hub = world.createBody({ type: 'dynamic', position: start });
+      hub.createFixture(planck.Circle(0.12), { density: 4, friction: mu, filterGroupIndex: -1 });
+      const rim = [];
+      for (let i = 0; i < N; i++) {
+        const th = 2 * Math.PI * i / N;
+        const b = world.createBody({ type: 'dynamic', position: Vec2(start.x + (A - rs) * Math.cos(th), start.y + (A - rs) * Math.sin(th)) });
+        b.createFixture(planck.Circle(rs), { density: 4, friction: mu, filterGroupIndex: -1 });
+        rim.push(b);
+      }
+      const dj = (b1, b2, fr) => world.createJoint(planck.DistanceJoint({ frequencyHz: fr, dampingRatio: 0.4 }, b1, b2, b1.getPosition(), b2.getPosition()));
+      for (let i = 0; i < N; i++) {
+        dj(hub, rim[i], f);
+        dj(rim[i], rim[(i + 1) % N], f * 1.5);
+        dj(rim[i], rim[(i + 2) % N], f);
+      }
+      bodies = [hub, ...rim];
+      hub.rim = rim;
+    }
+    for (const b of bodies) b.setAwake(false);
+    t = 0; still = 0; flags = {}; samples = []; stopX = null; bottomInfo = null;
+    state = 'ready';
+    fitView();
+    updateMeters();
+    resetChart();
+    $('#m-stop').textContent = '—';
+    $('#m-a').textContent = '—';
+    $('#m-u').textContent = '—';
+    setEbar(null);
+  }
+
+  // ---------- 便利関数 ----------
+  function totalMass() { return bodies.reduce((s, b) => s + b.getMass(), 0); }
+  function cm() {
+    let m = 0, x = 0, y = 0, vx = 0, vy = 0;
+    for (const b of bodies) {
+      const bm = b.getMass(), p = b.getPosition(), v = b.getLinearVelocity();
+      m += bm; x += bm * p.x; y += bm * p.y; vx += bm * v.x; vy += bm * v.y;
+    }
+    return { x: x / m, y: y / m, vx: vx / m, vy: vy / m, m };
+  }
+  function kinetic() {
+    let ke = 0;
+    for (const b of bodies) ke += 0.5 * b.getMass() * b.getLinearVelocity().lengthSquared() + 0.5 * b.getInertia() * b.getAngularVelocity() ** 2;
+    return ke;
+  }
+  let startCM = null;
+
+  function theoryAcc() {
+    const al = geom.al;
+    const noSlip = Math.tan(al) < 3 * mu;
+    return noSlip ? (2 / 3) * G * Math.sin(al) : G * (Math.sin(al) - mu * Math.cos(al));
+  }
+
+  // ---------- 発射 ----------
+  function launch() {
+    if (state !== 'ready') build();
+    RV.sfx.unlock();
+    state = 'running';
+    attempts++;
+    startCM = cm();
+    for (const b of bodies) b.setAwake(true);
+    log.reset();
+    const rigid = LEVELS[level].k >= 1;
+    log.add(`放つ：α=${alphaDeg.toFixed(1)}°, μ=${mu.toFixed(2)}, κ=${LEVELS[level].k.toFixed(2)}`, [], { t: 0 });
+    log.add('重力の「場」が円柱の各部に作用する（場の力を原因とする）', [10, 9], { t: 0, arrow: true });
+    log.add('円柱が斜面を押す → 斜面は地面に固定され動かないので、同じ大きさの反作用を返す', [2, 7, 8], { t: 0, arrow: true });
+    if (Math.tan(geom.al) < 3 * mu) {
+      log.add('接触点で静止摩擦 F が反作用として返る → 重心まわりのトルク aF → 回転が始まる', [6, 9], { t: 0, arrow: true });
+    } else {
+      log.add('tanα > 3μ0：静止摩擦では反作用を返しきれない → 滑りながら転がる', [5, 6], { t: 0, arrow: true });
+    }
+    if (rigid) log.add('剛体なので、接触点で受けた力は瞬時に全体へ伝わる（透過伝達性）', [4], { t: 0, arrow: true });
+    else log.add('外周の粒子が先に押され、ばねが縮んでから中心へ遅れて伝わる＝透過伝達性が成り立たない', [4, 5], { t: 0, arrow: true });
+  }
+
+  // ---------- 1ステップ ----------
+  function step(dt) {
+    if (state !== 'running') return;
+    const c = cm();
+    if (c.x > geom.sand0 && Math.abs(c.vx) > 0.03) {
+      // 砂地の転がり抵抗: 砂が −F を返す
+      for (const b of bodies) b.applyForceToCenter(Vec2(-CRR * b.getMass() * G * Math.sign(c.vx), 0), true);
+      if (!flags.sand) { flags.sand = true; log.add('砂地が進行と逆向きの抵抗 −F を返す → 減速 α → 円柱は −mα を反作用として返す', [1, 2, 5], { t, arrow: true }); RV.sfx.thud(0.4); }
+    }
+    world.step(dt, 8, 3);
+    t += dt;
+    const c2 = cm();
+    // 斜面上の移動距離（スタート位置からの斜面方向）
+    const al = geom.al;
+    const sAlong = (c2.x - startCM.x) * Math.cos(al) - (c2.y - startCM.y) * Math.sin(al);
+    if (!flags.bottom) {
+      if (samples.length === 0 || t - samples[samples.length - 1].t >= 1 / 30) samples.push({ t, s: sAlong });
+      // 斜面上での滑り速度（剛体のみ）
+      if (LEVELS[level].k >= 1) {
+        const v = hub.getLinearVelocity(), w = hub.getAngularVelocity();
+        const vt = v.x * Math.cos(al) - v.y * Math.sin(al);
+        const u = vt + w * A;
+        $('#m-u').textContent = u.toFixed(2) + ' m/s';
+        if (Math.abs(u) > 0.05 && !flags.slip && t > 0.05) { flags.slip = true; log.add(`滑りを検出：u = ẋ − aω = ${u.toFixed(2)} m/s（動摩擦 μMg cosα が働く）`, [5, 6], { t, arrow: true }); }
+      }
+      // 斜面下端（円弧の始まり）に達した
+      const tArcStart = geom.X0 - geom.tArc * Math.cos(al);
+      if (c2.x >= tArcStart) {
+        flags.bottom = true;
+        const dropE = c2.m * G * (startCM.y - c2.y);
+        const kt = 0.5 * c2.m * (c2.vx * c2.vx + c2.vy * c2.vy);
+        const ke = kinetic();
+        bottomInfo = { kt: kt / dropE, kr: (ke - kt) / dropE, d: Math.max(0, 1 - ke / dropE) };
+        setEbar(bottomInfo);
+        // 実測加速度: s = ½ a t² のフィット
+        let num = 0, den = 0;
+        for (const p of samples) { num += p.s * p.t * p.t; den += p.t ** 4; }
+        const aMeas = 2 * num / den;
+        $('#m-a').textContent = aMeas.toFixed(2) + ' m/s²';
+        log.add(`斜面下端：並進 ${(bottomInfo.kt * 100).toFixed(0)}% / 回転・内部 ${(bottomInfo.kr * 100).toFixed(0)}% / 散逸 ${(bottomInfo.d * 100).toFixed(0)}%`, [9], { t });
+        updateChart();
+      }
+    }
+    // 停止判定
+    if (c2.x > geom.sand0 && Math.abs(c2.vx) < 0.03) {
+      still += dt;
+      if (still > 0.5) finish(c2.x - geom.sand0);
+    } else still = 0;
+    if (c2.x > geom.xEnd - 0.7 && !flags.wall) { flags.wall = true; log.add('終端の壁に衝突', [2, 8], { t }); RV.sfx.thud(1); }
+    if (t > 25) finish(c2.x - geom.sand0);
+  }
+
+  function finish(d) {
+    if (state !== 'running') return;
+    state = 'done';
+    stopX = d;
+    if (!flags.bottom) updateChart();
+    const target = LEVELS[level].target;
+    const err = Math.abs(d - target);
+    $('#m-stop').textContent = d.toFixed(2) + ' m';
+    log.add(`停止：砂地から ${d.toFixed(2)} m（目標 ${target.toFixed(1)} m、誤差 ${err.toFixed(2)} m）`, [], { t });
+    if (err <= HALF_ZONE) {
+      const g = RV.grade(err, [0.15, 0.35, HALF_ZONE]);
+      const capped = Math.min(g, level + 1); // L1 は最大★1、L2 は★2、L3 で★3
+      RV.saveStars('c2', capped);
+      RV.sfx.win();
+      const al = geom.al;
+      const aTh = theoryAcc();
+      const aMeasTxt = $('#m-a').textContent;
+      const rigid = LEVELS[level].k >= 1;
+      const ei = bottomInfo ? `並進 ${(bottomInfo.kt * 100).toFixed(0)}% / 回転・内部 ${(bottomInfo.kr * 100).toFixed(0)}% / 散逸 ${(bottomInfo.d * 100).toFixed(0)}%` : '—';
+      RV.modal('ゾーン内で停止！ ' + '★'.repeat(g) + '☆'.repeat(3 - g),
+        `<p>停止位置 <b>${d.toFixed(2)} m</b>（目標 ${target.toFixed(1)} m、誤差 ${err.toFixed(2)} m）・試行 ${attempts} 回</p>
+         <p>斜面での加速度：実測 <b>${aMeasTxt}</b> ／ 剛体理論 <b>${aTh.toFixed(2)} m/s²</b></p>
+         <p>斜面下端のエネルギー配分：${ei}<br><span class="note">剛体・滑りなしの理論は 並進 67% / 回転 33% / 散逸 0%</span></p>
+         <p class="note">${rigid
+            ? '剛体では「2点間の距離が一定」なので、位置エネルギーはきれいに並進と回転に分かれる。'
+            : '剛体でないタイヤは、つぶれて戻るたびにエネルギーを散逸する。I = Ma²/2 という「固有の定数」がもう存在しない。'}</p>
+         ${level < 2 ? '<p>次のレベルでは、剛性 κ がさらに下がる。</p>' : '<p>剛体が消えると、教科書の 2/3 は成り立たない。</p>'}
+         ${g > capped ? `<p class="note">このレベルで得られる★は最大 ${level + 1} 個。</p>` : ''}`,
+        level < 2 ? [{ label: 'もう一度', onClick: build }, { label: '次のレベルへ', primary: true, onClick: () => setLevel(level + 1) }]
+                  : [{ label: 'もう一度', primary: true, onClick: build }]);
+    } else {
+      RV.sfx.fail();
+      RV.toast(stage, d < target ? `手前で停止（${(target - d).toFixed(2)} m 足りない）` : `行き過ぎ（${(d - target).toFixed(2)} m オーバー）`, 2200);
+    }
+  }
+
+  // ---------- 描画 ----------
+  function fitView() {
+    if (!geom) return;
+    const x0 = -1.2, x1 = geom.xEnd + 0.4;
+    const y0 = -1.1, y1 = Math.max(geom.H + 1.2, 3);
+    const s = Math.min(view.w / (x1 - x0), view.h / (y1 - y0));
+    view.s = s;
+    view.ox = (view.w - (x1 - x0) * s) / 2 - x0 * s;
+    view.oy = view.h - ((view.h - (y1 - y0) * s) / 2) + y0 * s;
+  }
+  const X = x => view.ox + x * view.s, Y = y => view.oy - y * view.s;
+
+  function render() {
+    const { w, h, dpr } = view;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, w, h);
+    if (!geom) return;
+    // 砂地と目標ゾーン
+    const tgt = LEVELS[level].target;
+    ctx.fillStyle = '#3a2f1d';
+    ctx.fillRect(X(geom.sand0), Y(0), SAND_LEN * view.s, 0.35 * view.s);
+    ctx.fillStyle = 'rgba(111,220,140,.22)';
+    ctx.fillRect(X(geom.sand0 + tgt - HALF_ZONE), Y(2.2), 2 * HALF_ZONE * view.s, 2.2 * view.s);
+    ctx.strokeStyle = '#6fdc8c'; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(X(geom.sand0 + tgt), Y(2.2)); ctx.lineTo(X(geom.sand0 + tgt), Y(0)); ctx.stroke(); ctx.setLineDash([]);
+    // 目盛り
+    ctx.fillStyle = '#8d9aab'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
+    for (let i = 0; i <= SAND_LEN; i++) {
+      const x = X(geom.sand0 + i);
+      ctx.fillRect(x, Y(0) + 0.35 * view.s, 1, i % 5 === 0 ? 8 : 4);
+      if (i % 2 === 0) ctx.fillText(i + 'm', x, Y(0) + 0.35 * view.s + 20);
+    }
+    // 地面
+    ctx.strokeStyle = '#c9d3df'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    geom.verts.forEach((v, i) => i ? ctx.lineTo(X(v.x), Y(v.y)) : ctx.moveTo(X(v.x), Y(v.y)));
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(201,211,223,.06)';
+    ctx.beginPath(); ctx.moveTo(X(geom.verts[0].x), Y(-1)); geom.verts.forEach(v => ctx.lineTo(X(v.x), Y(v.y))); ctx.lineTo(X(geom.xEnd), Y(-1)); ctx.fill();
+    // 角度表示
+    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 1;
+    const bx = geom.X0, r = 1.0 * view.s;
+    ctx.beginPath(); ctx.arc(X(bx), Y(0), r, Math.PI, Math.PI + geom.al); ctx.stroke();
+    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'left';
+    ctx.fillText(`α=${alphaDeg.toFixed(1)}°`, X(bx) - r - 50, Y(0) - 8);
+    // 円柱
+    const rigid = LEVELS[level].k >= 1;
+    if (rigid) {
+      const p = hub.getPosition(), ang = hub.getAngle();
+      ctx.fillStyle = 'rgba(92,200,255,.25)'; ctx.strokeStyle = '#5cc8ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), A * view.s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      for (let i = 0; i < 3; i++) {
+        const a = ang + i * Math.PI * 2 / 3;
+        ctx.beginPath(); ctx.moveTo(X(p.x), Y(p.y)); ctx.lineTo(X(p.x + A * Math.cos(a)), Y(p.y + A * Math.sin(a))); ctx.stroke();
+      }
+    } else {
+      const rim = hub.rim, hp = hub.getPosition();
+      ctx.fillStyle = 'rgba(255,122,69,.22)'; ctx.strokeStyle = '#ff7a45'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      rim.forEach((b, i) => { const p = b.getPosition(); i ? ctx.lineTo(X(p.x), Y(p.y)) : ctx.moveTo(X(p.x), Y(p.y)); });
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,122,69,.45)'; ctx.lineWidth = 1;
+      rim.forEach(b => { const p = b.getPosition(); ctx.beginPath(); ctx.moveTo(X(hp.x), Y(hp.y)); ctx.lineTo(X(p.x), Y(p.y)); ctx.stroke(); });
+      ctx.fillStyle = '#ff7a45';
+      rim.forEach(b => { const p = b.getPosition(); ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 0.09 * view.s, 0, Math.PI * 2); ctx.fill(); });
+      ctx.beginPath(); ctx.arc(X(hp.x), Y(hp.y), 0.12 * view.s, 0, Math.PI * 2); ctx.fill();
+    }
+    // 停止マーカー
+    if (stopX != null) {
+      ctx.fillStyle = '#ffd166';
+      ctx.beginPath(); ctx.moveTo(X(geom.sand0 + stopX), Y(0) - 2); ctx.lineTo(X(geom.sand0 + stopX) - 6, Y(0) - 14); ctx.lineTo(X(geom.sand0 + stopX) + 6, Y(0) - 14); ctx.fill();
+    }
+    ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
+    ctx.fillText(`試行 ${attempts}  ／  目標：砂地から ${tgt.toFixed(1)} m ± ${HALF_ZONE} m`, 14, h - 12);
+    updateMeters();
+  }
+
+  function updateMeters() {
+    if (!bodies.length) return;
+    const c = cm();
+    $('#m-t').textContent = t.toFixed(2) + ' s';
+    $('#m-v').textContent = Math.hypot(c.vx, c.vy).toFixed(2) + ' m/s';
+  }
+
+  function setEbar(info) {
+    const is = $('#ebar').children;
+    if (!info) {
+      [...is].forEach(i => i.style.width = '0');
+      $('#lg-t').textContent = '並進 —'; $('#lg-r').textContent = '回転・内部 —'; $('#lg-d').textContent = '散逸 —';
+      return;
+    }
+    const kt = Math.max(0, info.kt), kr = Math.max(0, info.kr), d = Math.max(0, info.d), sum = kt + kr + d || 1;
+    is[0].style.width = (kt / sum * 100) + '%';
+    is[1].style.width = (kr / sum * 100) + '%';
+    is[2].style.width = (d / sum * 100) + '%';
+    $('#lg-t').textContent = `並進 ${(kt * 100).toFixed(0)}%`;
+    $('#lg-r').textContent = `回転・内部 ${(kr * 100).toFixed(0)}%`;
+    $('#lg-d').textContent = `散逸 ${(d * 100).toFixed(0)}%`;
+  }
+
+  // ---------- グラフ ----------
+  let chart = null;
+  function initChart() {
+    if (!window.Chart) return;
+    Chart.defaults.color = '#8d9aab';
+    Chart.defaults.borderColor = '#2b3542';
+    chart = new Chart($('#chart'), {
+      type: 'line',
+      data: { datasets: [
+        { label: '剛体理論', data: [], borderColor: '#5cc8ff', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 },
+        { label: '実測', data: [], borderColor: '#ff7a45', pointRadius: 0, borderWidth: 2 }
+      ] },
+      options: {
+        animation: false, maintainAspectRatio: false, parsing: false,
+        scales: { x: { type: 'linear', title: { display: true, text: 't [s]' } }, y: { title: { display: true, text: 's [m]' } } },
+        plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } }
+      }
+    });
+  }
+  function resetChart() {
+    if (!chart) return;
+    chart.data.datasets[0].data = []; chart.data.datasets[1].data = []; chart.update();
+  }
+  function updateChart() {
+    if (!chart) return;
+    const a = theoryAcc();
+    const sMax = S - START_S;
+    const tEnd = Math.sqrt(2 * sMax / a);
+    const th = [];
+    for (let i = 0; i <= 40; i++) { const tt = tEnd * i / 40; th.push({ x: tt, y: 0.5 * a * tt * tt }); }
+    chart.data.datasets[0].data = th;
+    chart.data.datasets[1].data = samples.map(p => ({ x: p.t, y: p.s }));
+    chart.update();
+  }
+
+  // ---------- UI ----------
+  function syncUI() {
+    $('#alpha-v').textContent = alphaDeg.toFixed(1) + '°';
+    $('#mu-v').textContent = mu.toFixed(2);
+    const crit = Math.atan(3 * mu) * 180 / Math.PI;
+    const noSlip = Math.tan(alphaDeg * Math.PI / 180) < 3 * mu;
+    $('#slipnote').innerHTML = `滑らない条件 tanα &lt; 3μ0 → α &lt; ${crit.toFixed(1)}°：<b style="color:${noSlip ? 'var(--good)' : 'var(--bad)'}">${noSlip ? '転がる（滑らない）' : '滑りながら転がる'}</b>`;
+    $('#m-at').textContent = ((2 / 3) * G * Math.sin(alphaDeg * Math.PI / 180)).toFixed(2) + ' m/s²';
+    $('#lvl-note').textContent = LEVELS[level].note;
+    kb.set(LEVELS[level].k);
+  }
+  function setLevel(l) {
+    level = l; attempts = 0;
+    document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.l === l));
+    syncUI(); build();
+  }
+  $('#levels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setLevel(+b.dataset.l); });
+  $('#alpha').addEventListener('input', e => { alphaDeg = +e.target.value; syncUI(); if (state !== 'running') build(); });
+  $('#mu').addEventListener('input', e => { mu = +e.target.value; syncUI(); if (state !== 'running') build(); });
+  $('#go').addEventListener('click', launch);
+  $('#reset').addEventListener('click', build);
+  window.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); launch(); } });
+
+  RV.fitCanvas(cv, (w, h, dpr) => { view.w = w; view.h = h; view.dpr = dpr; fitView(); });
+  initChart();
+  syncUI();
+  build();
+  RV.loop(step, render, 1 / 120);
+
+  // テスト・デバッグ用
+  window.C2 = {
+    get state() { return state; }, get stop() { return stopX; }, get bottom() { return bottomInfo; },
+    get level() { return level; }, setLevel, launch,
+    set(a, m) { alphaDeg = a; mu = m; $('#alpha').value = a; $('#mu').value = m; syncUI(); build(); }
+  };
+
+  RV.modal('第2章　転がれない円柱',
+    `<p>世界から剛体が消えつつある。教科書は言う──「質量 M、半径 a の円柱が斜面を滑らずに転がるとき、加速度は質点の <b>2/3</b>」。位置エネルギーの <b>1/3</b> が回転に使われるからだ。</p>
+     <p>だがそれは「どの2点の距離も変わらない」剛体の話。剛性 κ が下がると、円柱はつぶれ、揺れ、エネルギーを失う。</p>
+     <p><b>目的：</b>α と μ を選んで円柱を放ち、砂地の目標ゾーンで止めよ。L1 で教科書の世界を確かめ、L2・L3 で崩れゆく世界に挑む。</p>
+     <p class="note">操作：スライダーで α・μ を調整 → 「放つ」（Space キー）。</p>`,
+    [{ label: 'はじめる', primary: true }]);
+})();
+</script>
+</body>
+</html>

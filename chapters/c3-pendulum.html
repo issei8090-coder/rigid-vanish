@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可逆振り子</title>
+<link rel="stylesheet" href="../shared/common.css">
+<style>
+  .chart-box { position: relative; height: 170px; }
+  table.recs { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  table.recs td, table.recs th { padding: 2px 4px; border-bottom: 1px dashed #263040; text-align: right; }
+  table.recs th { color: var(--muted); font-weight: 400; }
+  .recs-wrap { max-height: 130px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション</h2>
+      <p>この崩れかけた世界の<b>重力加速度 g</b> は誰も知らない。長さ 1 m の棒を<b>実体振り子</b>にして、g を測定せよ。</p>
+      <p class="note">軸の位置 h を変えて周期 T を何度も測る → 重心の両側で<b>同じ周期になる2点</b> h₁, h₂ を見つける → l = h₁ + h₂ として g = 4π²l/T²。誤差が小さいほど★が増える（L1 は 3% 以内でクリア）。</p>
+    </div>
+    <div class="panel">
+      <h2>レベル（剛性 κ）</h2>
+      <div class="seg" id="levels">
+        <button data-l="0" class="on">L1 κ=1.00</button><button data-l="1">L2 κ=0.35</button><button data-l="2">L3 κ=0.08</button>
+      </div>
+      <p class="note" id="lvl-note"></p>
+    </div>
+    <div class="panel">
+      <h2>操作</h2>
+      <div class="row"><label>軸の位置 h</label><input type="range" id="h" min="0.02" max="0.49" step="0.005" value="0.15"><span class="val" id="h-v"></span></div>
+      <div class="row"><label>振れ角 θ₀</label><input type="range" id="th0" min="2" max="60" step="1" value="5"><span class="val" id="th0-v"></span></div>
+      <div class="row"><label>早送り</label><div class="seg" id="speed"><button data-s="1" class="on">×1</button><button data-s="4">×4</button><button data-s="10">×10</button></div></div>
+      <p class="note">h は棒の中心（重心 G）から上端方向へ測った軸までの距離。画面の棒をクリックしても軸を選べる。</p>
+      <div class="btns">
+        <button class="btn primary" id="go">振らせる</button>
+        <button class="btn" id="stop">止める</button>
+        <button class="btn" id="calc">g を算出</button>
+        <button class="btn" id="clear">記録クリア</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">経過時間 t</div><div class="v" id="m-t">0.00 s</div></div>
+        <div class="meter"><div class="k">振れ角 θ</div><div class="v" id="m-th">0.0°</div></div>
+        <div class="meter"><div class="k">零交差</div><div class="v" id="m-zc">0 / 4</div></div>
+        <div class="meter"><div class="k">今回の周期 T</div><div class="v" id="m-T">—</div></div>
+        <div class="meter"><div class="k">軸まわり I（実効）</div><div class="v" id="m-I">—</div></div>
+        <div class="meter"><div class="k">推定 g</div><div class="v" id="m-g">—</div></div>
+      </div>
+      <div class="recs-wrap" style="margin-top:8px"><table class="recs"><thead><tr><th>#</th><th>h [m]</th><th>θ₀</th><th>T [s]</th></tr></thead><tbody id="recs"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <h2>周期 T と軸位置 h</h2>
+      <div class="chart-box"><canvas id="chT"></canvas></div>
+      <p class="note" id="chT-note">破線は g = 9.80 m/s² と仮定した剛体の理論曲線（この世界の g とは限らない）。</p>
+    </div>
+    <div class="panel">
+      <h2>振れ角 θ(t)：実測 vs 非線形方程式の厳密解（odex）</h2>
+      <div class="chart-box"><canvas id="chTh"></canvas></div>
+      <p class="note" id="amp-note"></p>
+    </div>
+    <div class="panel">
+      <h2>因果ログ</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>理論（実体振り子・可逆振り子）</h2>
+<div class="formula">I d²φ/dt² = −Mgh sinφ          (3-37)
+T = 2π √(I / Mgh)               (3-39)
+I = I_G + Mh²,  I_G = ML²/12     (3-21)(3-24)
+l = I_G/(Mh) + h                (3-41)
+同じ T を与える2点:  h₁ + h₂ = l   (3-42)
+g = 4π² l / T²                  (3-43)</div>
+      <p class="note">h → 0 でも h → ∞ でも T → ∞。最小周期は h = L/√12 ≈ 0.289 m。κ&lt;1 の棒は10個の節を回転ばねでつないだもの：I が一定でなくなる。</p>
+    </div>
+    <p class="ref">参照: 兵庫県立大 物理学テキスト第3章「剛体」3.5 固定軸のまわりの回転, 3.6.3 実体振り子の再考察 / 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016</p>
+  </aside>
+</main>
+
+<script src="../shared/common.js"></script>
+<script>
+RV.header({ id: 'c3', chap: '第3章', title: '可逆振り子で g を測れ', libs: ['p2.js', 'odex', 'Chart.js', 'Tone.js'] });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js" onload="RV.libOk('Tone.js')" onerror="RV.libOk('Tone.js',false)"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" onload="RV.libOk('Chart.js')" onerror="RV.libOk('Chart.js',false)"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js" onload="RV.libOk('p2.js')" onerror="RV.libOk('p2.js',false)"></script>
+<script type="module">
+  try {
+    const { Solver } = await import('https://cdn.jsdelivr.net/npm/odex@3.0.0-rc.4/+esm');
+    window.ODEX = Solver;
+    RV.libOk('odex');
+    window.dispatchEvent(new Event('odex-ready'));
+  } catch (e) { RV.libOk('odex', false); }
+</script>
+<script>
+(function () {
+  'use strict';
+  const $ = RV.$;
+  const L = 1.0, M = 1.0, W = 0.03, NSEG = 10;
+  const IG = M * (L * L + W * W) / 12;
+  const LEVELS = [
+    { k: 1.00, tol: 3, pair: 0.005, th: [0.5, 1.5, 3], note: '剛体の棒。I = I_G + Mh² は軸を決めれば決まる定数。許容誤差 3%。' },
+    { k: 0.35, tol: 6, pair: 0.01, th: [1, 3, 6], note: '10の節が回転ばねでつながった棒。揺れるたびにたわむ。許容誤差 6%。' },
+    { k: 0.08, tol: 12, pair: 0.02, th: [2, 6, 12], note: 'ほとんど鎖。軸より上の部分は自分を支えられない。許容誤差 12%。' }
+  ];
+  // この世界の g（隠し値）: レベルごとに乱数で決める
+  const G_TRUE = LEVELS.map(() => +(9.0 + Math.random() * 1.6).toFixed(3));
+
+  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const kb = RV.kappaBadge(stage);
+  const log = RV.causal('#causal');
+  let level = 0, hPivot = 0.15, th0 = 5 * Math.PI / 180, speed = 1;
+  let world, groundBody, segs = [], state = 'idle'; // idle | swinging
+  let t = 0, crossings = [], prevTh = 0, measured = false, thSamples = [], trail = [];
+  let recs = [[], [], []]; // レベルごとの計測記録 {h, th0, T}
+  let gEst = null;
+  const view = { w: 800, h: 600, dpr: 1, s: 300, px: 400, py: 120 };
+
+  // ---------- 物理 ----------
+  function build() {
+    const gT = G_TRUE[level];
+    world = new p2.World({ gravity: [0, -gT] });
+    world.solver.iterations = 30;
+    world.solver.tolerance = 1e-10;
+    groundBody = new p2.Body({ mass: 0 });
+    world.addBody(groundBody);
+    segs = [];
+    const th = state === 'swinging' ? th0 : 0;
+    const up = [-Math.sin(th), Math.cos(th)];
+    const center = [hPivot * Math.sin(th), -hPivot * Math.cos(th)];
+    const k = LEVELS[level].k;
+    const mk = (len, mass, u) => {
+      const b = new p2.Body({ mass, position: [center[0] + u * up[0], center[1] + u * up[1]], angle: th });
+      b.damping = 0; b.angularDamping = 0;
+      const sh = new p2.Box({ width: W, height: len });
+      sh.collisionGroup = 1; sh.collisionMask = 0;
+      b.addShape(sh);
+      world.addBody(b);
+      return b;
+    };
+    if (k >= 1) {
+      const b = mk(L, M, 0);
+      b.u0 = -L / 2; b.u1 = L / 2;
+      segs.push(b);
+      const c = new p2.RevoluteConstraint(groundBody, b, { worldPivot: [0, 0], collideConnected: false });
+      world.addConstraint(c);
+    } else {
+      const len = L / NSEG;
+      for (let i = 0; i < NSEG; i++) {
+        const u = -L / 2 + (i + 0.5) * len;
+        const b = mk(len, M / NSEG, u);
+        b.u0 = u - len / 2; b.u1 = u + len / 2;
+        segs.push(b);
+      }
+      const stiff = 12 * Math.pow(k, 1.2);
+      for (let i = 1; i < NSEG; i++) {
+        const u = -L / 2 + i * len;
+        const wp = [center[0] + u * up[0], center[1] + u * up[1]];
+        world.addConstraint(new p2.RevoluteConstraint(segs[i - 1], segs[i], { worldPivot: wp, collideConnected: false }));
+        world.addSpring(new p2.RotationalSpring(segs[i - 1], segs[i], { stiffness: stiff, damping: 0.02 }));
+      }
+      // 軸を含む節に固定軸
+      const idx = Math.min(NSEG - 1, Math.floor((hPivot + L / 2) / len));
+      world.addConstraint(new p2.RevoluteConstraint(groundBody, segs[idx], { worldPivot: [0, 0], collideConnected: false }));
+    }
+  }
+
+  function cmAngle() {
+    let x = 0, y = 0;
+    for (const b of segs) { x += b.mass * b.position[0]; y += b.mass * b.position[1]; }
+    x /= M; y /= M;
+    return { th: Math.atan2(x, -y), x, y };
+  }
+  function inertiaAboutPivot() {
+    let I = 0;
+    for (const b of segs) I += b.inertia + b.mass * (b.position[0] ** 2 + b.position[1] ** 2);
+    return I;
+  }
+
+  function release() {
+    RV.sfx.unlock();
+    state = 'swinging';
+    t = 0; crossings = []; measured = false; thSamples = []; trail = [];
+    build();
+    prevTh = cmAngle().th;
+    log.reset();
+    const rigid = LEVELS[level].k >= 1;
+    log.add(`放す：h=${hPivot.toFixed(3)} m, θ₀=${(th0 * 180 / Math.PI).toFixed(0)}°, κ=${LEVELS[level].k.toFixed(2)}`, [], { t: 0 });
+    log.add('重力の「場」が棒の各部に作用する（場の力を原因とする）', [10, 9], { t: 0, arrow: true });
+    log.add('棒が軸 O を押す → 軸は固定され動かないので反作用を返す（抗力のモーメントは 0）', [2, 7], { t: 0, arrow: true });
+    log.add('重力のモーメント Mgh sinθ だけが残る → 角加速度 θ̈ = −Mgh sinθ / I', [1, 9], { t: 0, arrow: true });
+    if (rigid) log.add('剛体：力は瞬時に全体へ伝わり、I = I_G + Mh² は一定（自由度1の運動）', [4], { t: 0, arrow: true });
+    else log.add('非剛体：節ごとに力が遅れて伝わり、棒がたわむ → 質量分布が動き I が時間変化する（自由度 10）', [4, 5], { t: 0, arrow: true });
+    drawThetaChart();
+  }
+
+  function step(dt) {
+    if (state !== 'swinging') return;
+    for (let i = 0; i < speed; i++) {
+      world.step(dt);
+      t += dt;
+      const { th } = cmAngle();
+      // 上向き零交差（線形補間）
+      if (prevTh < 0 && th >= 0) {
+        const tc = t - dt * th / (th - prevTh);
+        crossings.push(tc);
+        RV.sfx.tone(crossings.length >= 4 ? 880 : 660, '32n');
+        if (crossings.length === 4 && !measured) onMeasured();
+      }
+      prevTh = th;
+      if (thSamples.length === 0 || t - thSamples[thSamples.length - 1].x >= 1 / 30) {
+        if (t <= 12) thSamples.push({ x: t, y: th * 180 / Math.PI });
+      }
+      if (!measured && t > 25) {
+        measured = true;
+        log.add('25 秒たっても周期が定まらない（振動が規則的でない）', [4], { t });
+        RV.sfx.fail();
+      }
+      if (LEVELS[level].k < 1 && !this_flag.bent) {
+        const bend = Math.abs(segs[NSEG - 1].angle - segs[0].angle);
+        if (bend > 0.35) { this_flag.bent = true; log.add(`棒が ${(bend * 180 / Math.PI).toFixed(0)}° たわんだ：「2点間の距離が一定」でなくなった`, [4], { t, arrow: true }); }
+      }
+    }
+  }
+  const this_flag = { bent: false };
+
+  function onMeasured() {
+    measured = true;
+    const T = (crossings[3] - crossings[0]) / 3;
+    const r = { h: hPivot, th0: th0 * 180 / Math.PI, T };
+    recs[level].push(r);
+    $('#m-T').textContent = T.toFixed(4) + ' s';
+    log.add(`周期 T = ${T.toFixed(4)} s（3周期の平均、零交差の線形補間）`, [], { t });
+    renderRecs();
+    updateTChart();
+    RV.toast(stage, `計測 #${recs[level].length}：h=${hPivot.toFixed(3)} m → T=${T.toFixed(4)} s`);
+  }
+
+  // ---------- g の算出 ----------
+  function calcG() {
+    const rs = recs[level];
+    if (rs.length < 2) { RV.toast(stage, 'まず2点以上計測しよう'); return; }
+    let best = null;
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+      const a = rs[i], b = rs[j];
+      if (Math.abs(a.h - b.h) < 0.04) continue;
+      const rel = Math.abs(a.T - b.T) / ((a.T + b.T) / 2);
+      if (!best || rel < best.rel) best = { a, b, rel };
+    }
+    if (!best) { RV.toast(stage, '軸の位置が十分離れた2点が必要（重心の両側）'); return; }
+    const LV = LEVELS[level];
+    if (best.rel > LV.pair) {
+      RV.sfx.fail();
+      log.add(`最も周期が近いペア：h=${best.a.h.toFixed(3)} と ${best.b.h.toFixed(3)}、ΔT/T = ${(best.rel * 100).toFixed(2)}%（${(LV.pair * 100).toFixed(1)}% 以内まで詰めよう）`, [], {});
+      RV.toast(stage, `周期が揃っていない（ΔT/T = ${(best.rel * 100).toFixed(2)}%）。${(LV.pair * 100).toFixed(1)}% 以内に`, 2400);
+      return;
+    }
+    const l = best.a.h + best.b.h, T = (best.a.T + best.b.T) / 2;
+    gEst = 4 * Math.PI * Math.PI * l / (T * T);
+    $('#m-g').textContent = gEst.toFixed(3);
+    updateTChart();
+    drawThetaChart();
+    const gT = G_TRUE[level];
+    const errPct = Math.abs(gEst - gT) / gT * 100;
+    log.add(`h₁+h₂ = l = ${l.toFixed(4)} m, T = ${T.toFixed(4)} s → g = 4π²l/T² = ${gEst.toFixed(3)} m/s²`, [], {});
+    const rigid = LEVELS[level].k >= 1;
+    // 理論との比較: 剛体なら h₁h₂ = I_G/M
+    const prod = best.a.h * best.b.h;
+    if (errPct <= LV.tol) {
+      const g = RV.grade(errPct, LV.th);
+      const capped = Math.min(g, level + 1);
+      RV.saveStars('c3', capped);
+      RV.sfx.win();
+      RV.modal('g の測定に成功！ ' + '★'.repeat(g) + '☆'.repeat(3 - g),
+        `<p>測定値 <b>g = ${gEst.toFixed(3)} m/s²</b> ／ この世界の真の値 <b>${gT.toFixed(3)} m/s²</b>（誤差 ${errPct.toFixed(2)}%）</p>
+         <p>l = h₁ + h₂ = ${best.a.h.toFixed(3)} + ${best.b.h.toFixed(3)} = ${l.toFixed(4)} m（剛体理論では h₁h₂ = I_G/M = ${(IG / M).toFixed(4)}、実測の積 ${prod.toFixed(4)}）</p>
+         <p class="note">${rigid
+            ? '剛体では I が定数なので、可逆振り子の2つの軸は必ず h₁+h₂=l を満たす。だから g が測れる。'
+            : 'たわむ棒では I が時間とともに変わり、「相当単振子の長さ l」が一意に決まらない。g の測定は剛体という理想に支えられていた。'}</p>
+         ${g > capped ? `<p class="note">このレベルで得られる★は最大 ${level + 1} 個。</p>` : ''}`,
+        level < 2 ? [{ label: '続ける' }, { label: '次のレベルへ', primary: true, onClick: () => setLevel(level + 1) }]
+                  : [{ label: 'OK', primary: true }]);
+    } else {
+      RV.sfx.fail();
+      RV.modal('g が合わない',
+        `<p>測定値 g = ${gEst.toFixed(3)} m/s²（真の値との誤差 ${errPct.toFixed(1)}% ＞ ${LV.tol}%）</p>
+         <p class="note">${rigid ? '振れ角 θ₀ が大きすぎないか？ 非線形性で周期が伸びる（下のグラフの odex 厳密解を参照）。' :
+           '棒がたわむ世界では、T(h) の曲線そのものがゆがむ。たわみの少ない軸位置や小さな振れ角を探そう。'}</p>`,
+        [{ label: 'もう一度', primary: true }]);
+    }
+  }
+
+  // ---------- 描画 ----------
+  function fit(w, h, dpr) {
+    view.w = w; view.h = h; view.dpr = dpr;
+    view.s = Math.min(w, h) * 0.58;
+    view.px = w / 2; view.py = h * 0.36;
+  }
+  const X = x => view.px + x * view.s, Y = y => view.py - y * view.s;
+
+  function render() {
+    const { w, h, dpr } = view;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, w, h);
+    if (!segs.length) return;
+    const rigid = LEVELS[level].k >= 1;
+    // 支持台
+    ctx.fillStyle = '#2b3542';
+    ctx.fillRect(X(-0.25), Y(0) - 6, 0.5 * view.s, 4);
+    // 軌跡（下端）
+    const last = segs[0];
+    const tipLocal = [0, -(last.u1 - last.u0) / 2];
+    const tip = [0, 0]; last.toWorldFrame(tip, tipLocal);
+    if (state === 'swinging') { trail.push([tip[0], tip[1]]); if (trail.length > 240) trail.shift(); }
+    ctx.strokeStyle = 'rgba(255,209,102,.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); trail.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.stroke();
+    // 棒
+    for (const b of segs) {
+      const len = b.u1 - b.u0;
+      ctx.save();
+      ctx.translate(X(b.position[0]), Y(b.position[1]));
+      ctx.rotate(-b.angle);
+      ctx.fillStyle = rigid ? 'rgba(92,200,255,.35)' : 'rgba(255,122,69,.35)';
+      ctx.strokeStyle = rigid ? '#5cc8ff' : '#ff7a45';
+      ctx.lineWidth = 1.5;
+      const ww = Math.max(6, W * view.s);
+      ctx.fillRect(-ww / 2, -len / 2 * view.s, ww, len * view.s);
+      ctx.strokeRect(-ww / 2, -len / 2 * view.s, ww, len * view.s);
+      ctx.restore();
+    }
+    // 目盛り（剛体時のみ・静止時）
+    if (rigid && state !== 'swinging') {
+      ctx.fillStyle = '#8d9aab'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'left';
+      for (let u = -0.5; u <= 0.5001; u += 0.1) {
+        const p = [0, 0]; segs[0].toWorldFrame(p, [0, u]);
+        ctx.fillRect(X(p[0]) + 6, Y(p[1]), 6, 1);
+        ctx.fillText((u >= 0 ? '+' : '') + u.toFixed(1), X(p[0]) + 16, Y(p[1]) + 4);
+      }
+    }
+    // 重心
+    const c = cmAngle();
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(X(c.x), Y(c.y), 5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '12px sans-serif'; ctx.fillText('G', X(c.x) + 8, Y(c.y) + 4);
+    // 軸
+    ctx.fillStyle = '#e6ebf1';
+    ctx.beginPath(); ctx.arc(X(0), Y(0), 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0a0d10';
+    ctx.beginPath(); ctx.arc(X(0), Y(0), 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e6ebf1'; ctx.fillText('O', X(0) - 18, Y(0) - 6);
+    // 鉛直線
+    ctx.strokeStyle = 'rgba(141,154,171,.3)'; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(0), Y(-0.9)); ctx.stroke(); ctx.setLineDash([]);
+    // メーター
+    $('#m-t').textContent = t.toFixed(2) + ' s';
+    $('#m-th').textContent = (c.th * 180 / Math.PI).toFixed(1) + '°';
+    $('#m-zc').textContent = `${Math.min(4, crossings.length)} / 4`;
+    $('#m-I').textContent = inertiaAboutPivot().toFixed(4);
+    ctx.fillStyle = '#8d9aab'; ctx.font = '12px Consolas, monospace'; ctx.textAlign = 'left';
+    ctx.fillText(`h = ${hPivot.toFixed(3)} m   I_O(剛体理論) = ${(IG + M * hPivot * hPivot).toFixed(4)} kg·m²   l = ${(IG / (M * hPivot) + hPivot).toFixed(4)} m`, 14, h - 14);
+    if (state === 'swinging' && speed > 1) ctx.fillText(`早送り ×${speed}`, w - 110, h - 14);
+  }
+
+  // ---------- グラフ ----------
+  let chT = null, chTh = null;
+  function initCharts() {
+    if (!window.Chart) return;
+    Chart.defaults.color = '#8d9aab';
+    Chart.defaults.borderColor = '#2b3542';
+    const common = { animation: false, maintainAspectRatio: false, parsing: false, plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } } };
+    chT = new Chart($('#chT'), {
+      type: 'scatter',
+      data: { datasets: [
+        { type: 'line', label: '剛体理論', data: [], borderColor: '#5cc8ff', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 },
+        { label: '計測', data: [], backgroundColor: '#ff7a45', pointRadius: 4 }
+      ] },
+      options: { ...common, scales: { x: { type: 'linear', min: 0, max: 0.5, title: { display: true, text: 'h [m]' } }, y: { min: 1.3, max: 3.2, title: { display: true, text: 'T [s]' } } } }
+    });
+    chTh = new Chart($('#chTh'), {
+      type: 'line',
+      data: { datasets: [
+        { label: 'odex 厳密解（剛体）', data: [], borderColor: '#5cc8ff', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 },
+        { label: '実測', data: [], borderColor: '#ff7a45', pointRadius: 0, borderWidth: 2 }
+      ] },
+      options: { ...common, scales: { x: { type: 'linear', min: 0, max: 12, title: { display: true, text: 't [s]' } }, y: { title: { display: true, text: 'θ [°]' } } } }
+    });
+    updateTChart();
+  }
+  function gRef() { return gEst || 9.8; }
+  function updateTChart() {
+    if (!chT) return;
+    const g = gRef();
+    const th = [];
+    for (let h = 0.06; h <= 0.5; h += 0.005) th.push({ x: h, y: 2 * Math.PI * Math.sqrt((IG / (M * h) + h) / g) });
+    chT.data.datasets[0].data = th;
+    chT.data.datasets[0].label = `剛体理論 (g=${g.toFixed(2)})`;
+    chT.data.datasets[1].data = recs[level].map(r => ({ x: r.h, y: r.T }));
+    chT.update();
+    $('#chT-note').textContent = gEst
+      ? `破線は算出した g = ${gEst.toFixed(3)} での剛体の理論曲線。`
+      : '破線は g = 9.80 m/s² と仮定した剛体の理論曲線（この世界の g とは限らない）。';
+  }
+  function drawThetaChart() {
+    if (!chTh) return;
+    chTh.data.datasets[1].data = thSamples;
+    // odex で非線形振り子 I θ̈ = −Mgh sinθ を解く
+    if (window.ODEX) {
+      const g = gRef(), I = IG + M * hPivot * hPivot, w2 = M * g * hPivot / I;
+      try {
+        const solver = new window.ODEX((x, y) => [y[1], -w2 * Math.sin(y[0])], 2, { absoluteTolerance: 1e-9, relativeTolerance: 1e-9 });
+        const sol = solver.integrate(0, [th0, 0]);
+        const pts = [];
+        let prev = th0, cross = [];
+        for (let i = 0; i <= 1200; i++) {
+          const tt = i * 0.01, y = sol(tt)[0];
+          pts.push({ x: tt, y: y * 180 / Math.PI });
+          if (prev < 0 && y >= 0) cross.push(tt);
+          prev = y;
+        }
+        chTh.data.datasets[0].data = pts;
+        const T0 = 2 * Math.PI / Math.sqrt(w2);
+        if (cross.length >= 2) {
+          const Tn = cross[1] - cross[0];
+          $('#amp-note').textContent = `θ₀=${(th0 * 180 / Math.PI).toFixed(0)}° の厳密周期 / 微小振動の周期 = ${(Tn / T0).toFixed(4)}（振れ角が大きいほど周期が伸び、g を小さく見積もる）`;
+        }
+      } catch (e) { $('#amp-note').textContent = 'odex 計算に失敗: ' + e.message; }
+    }
+    chTh.update();
+  }
+  setInterval(() => { if (state === 'swinging' && chTh) { chTh.data.datasets[1].data = thSamples; chTh.update(); } }, 250);
+  window.addEventListener('odex-ready', drawThetaChart);
+
+  function renderRecs() {
+    $('#recs').innerHTML = recs[level].map((r, i) => `<tr><td>${i + 1}</td><td>${r.h.toFixed(3)}</td><td>${r.th0.toFixed(0)}°</td><td>${r.T.toFixed(4)}</td></tr>`).join('') ||
+      '<tr><td colspan="4" style="text-align:center;color:var(--muted)">まだ計測なし</td></tr>';
+  }
+
+  // ---------- UI ----------
+  function syncUI() {
+    $('#h-v').textContent = hPivot.toFixed(3) + ' m';
+    $('#th0-v').textContent = (th0 * 180 / Math.PI).toFixed(0) + '°';
+    $('#lvl-note').textContent = LEVELS[level].note;
+    kb.set(LEVELS[level].k);
+  }
+  function idle() { state = 'idle'; t = 0; crossings = []; trail = []; this_flag.bent = false; build(); }
+  function setLevel(l) {
+    level = l; gEst = null;
+    $('#m-g').textContent = '—'; $('#m-T').textContent = '—';
+    document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.l === l));
+    syncUI(); idle(); renderRecs(); updateTChart(); thSamples = []; drawThetaChart();
+  }
+  function setH(v) { hPivot = Math.max(0.02, Math.min(0.49, v)); $('#h').value = hPivot; syncUI(); if (state !== 'swinging') idle(); }
+  $('#levels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setLevel(+b.dataset.l); });
+  $('#speed').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    speed = +b.dataset.s;
+    document.querySelectorAll('#speed button').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $('#h').addEventListener('input', e => setH(+e.target.value));
+  $('#th0').addEventListener('input', e => { th0 = +e.target.value * Math.PI / 180; syncUI(); drawThetaChart(); });
+  $('#go').addEventListener('click', () => { this_flag.bent = false; release(); });
+  $('#stop').addEventListener('click', idle);
+  $('#calc').addEventListener('click', calcG);
+  $('#clear').addEventListener('click', () => { recs[level] = []; gEst = null; $('#m-g').textContent = '—'; renderRecs(); updateTChart(); });
+  // 棒をクリックして軸位置を選ぶ（静止中のみ）
+  cv.addEventListener('click', e => {
+    if (state === 'swinging') return;
+    const r = cv.getBoundingClientRect();
+    const y = (view.py - (e.clientY - r.top)) / view.s; // 世界座標 y（軸=0）
+    const x = ((e.clientX - r.left) - view.px) / view.s;
+    // 静止時、棒の中心は y = −h。クリック点を新しい軸にする → 新 h = 旧 h + y
+    if (Math.abs(x) > 0.08 || y > 0.5 - hPivot || y < -0.5 - hPivot) return;
+    setH(+(hPivot + y).toFixed(3));
+  });
+
+  RV.fitCanvas(cv, fit);
+  initCharts();
+  syncUI(); idle(); renderRecs();
+  RV.loop(step, render, 1 / 240);
+
+  // テスト・デバッグ用
+  window.C3 = {
+    get state() { return state; }, get measured() { return measured; }, get recs() { return recs[level]; }, get gEst() { return gEst; },
+    gTrue: () => G_TRUE[level], setLevel, setH, release, calcG,
+    setTh0(d) { th0 = d * Math.PI / 180; $('#th0').value = d; syncUI(); },
+    setSpeed(s) { speed = s; }
+  };
+
+  RV.modal('第3章　可逆振り子で g を測れ',
+    `<p>剛体が消えはじめた世界では、重力加速度 g さえ誰も知らない。かつて人類は<b>可逆振り子</b>で g を精密に測った。</p>
+     <p>固定軸のまわりで振れる剛体の周期は T = 2π√(I/Mgh)。重心の両側に<b>同じ周期を与える2つの軸</b>があり、その間隔 l = h₁ + h₂ が「相当単振子の長さ」になる。だから g = 4π²l/T²。</p>
+     <p>しかしそれは I が定数──つまり棒が剛体──であるときの話だ。</p>
+     <p><b>目的：</b>軸の位置を変えて周期を測り、g を求めよ（許容誤差は L1 3%・L2 6%・L3 12%）。</p>
+     <p class="note">操作：h スライダー（または棒をクリック）で軸を選ぶ → 「振らせる」→ 4回の零交差で周期を自動計測 → 2点そろったら「g を算出」。</p>`,
+    [{ label: 'はじめる', primary: true }]);
+})();
+</script>
+</body>
+</html>

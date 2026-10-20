@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>打撃の中心</title>
+<link rel="stylesheet" href="../shared/common.css">
+<script src="../shared/common.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション</h2>
+      <p>キューでボールを1回だけ水平に突き、5 m 先の<b>ポケット（穴）</b>に落とせ。速すぎると穴を飛び越える。</p>
+      <p>★の数は<b>滑りによる損失</b>（摩擦熱 ÷ 最初の運動エネルギー）で決まる。滑らずに転がり出す高さ <i>h</i> で突けば損失は 0 になる。</p>
+    </div>
+    <div class="panel">
+      <h2>レベル（剛性 κ）</h2>
+      <div class="seg" id="levels">
+        <button data-k="1" class="on">Lv1 κ=1.00</button>
+        <button data-k="0.35">Lv2 κ=0.35</button>
+        <button data-k="0.08">Lv3 κ=0.08</button>
+      </div>
+      <p class="note" id="levelNote"></p>
+    </div>
+    <div class="panel">
+      <h2>操作</h2>
+      <div class="row"><label>打点の高さ h</label><input type="range" id="hS" min="0.2" max="1.9" step="0.01" value="1.2"><span class="val" id="hV"></span></div>
+      <div class="row"><label>力積 Fτ</label><input type="range" id="pS" min="0.4" max="3.0" step="0.01" value="1.6"><span class="val" id="pV"></span></div>
+      <div class="btns">
+        <button class="btn primary" id="shootBtn">突く（Space）</button>
+        <button class="btn" id="resetBtn">置き直す</button>
+      </div>
+      <p class="note">ステージ上でポインタを上下に動かしても h を変えられる。</p>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">v₀（重心）</div><div class="v" id="mV0">—</div></div>
+        <div class="meter"><div class="k">aω₀</div><div class="v" id="mW0">—</div></div>
+        <div class="meter"><div class="k">滑り v₁=v₀−aω₀</div><div class="v" id="mV1">—</div></div>
+        <div class="meter"><div class="k">滑り終わり t_c</div><div class="v" id="mTc">—</div></div>
+        <div class="meter"><div class="k">転がり速さ v_c</div><div class="v" id="mVc">—</div></div>
+        <div class="meter"><div class="k">滑り損失</div><div class="v" id="mLoss">—</div></div>
+        <div class="meter"><div class="k">慣性モーメント I/I₀</div><div class="v" id="mI">1.000</div></div>
+        <div class="meter"><div class="k">実効摩擦係数 μ</div><div class="v" id="mMu">—</div></div>
+      </div>
+      <p class="note">ステージ右上のグラフ：実線が計測した v と aω、破線が教科書の式 (3-80)(3-81)（μ は起動時に測った実効値）。</p>
+    </div>
+    <div class="panel">
+      <h2>因果ログ</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>理論（教科書 3.8 撃力による運動）</h2>
+      <div class="formula">ΔP = M v₀ = Fτ                    (3-72)(3-74)
+ΔL′ = I_G ω₀ = (h−a) Fτ           (3-73)(3-75)
+滑り速度  v₁ = v₀ − aω₀           (3-77)
+
+球   I=⅖Ma²  → 滑らない条件 h = 7a/5
+円板 I=½Ma²  → 滑らない条件 h = 3a/2（この2D世界）
+
+滑り中  v(t) = v₀ − μg t          (3-80)
+        ω(t) = ω₀ + (μMga/I) t    (3-81)
+転がり速さ  円板 v_c = (2h/3a) v₀ ／ 球 v_c = (5h/7a) v₀  (3-83)
+打撃の中心  x = I_G/(Mh)</div>
+    </div>
+    <p class="ref">参考: 小原「力学A 第3章 剛体」3.6.2(4)(7), 3.8, 例題（突かれた球） ／ 溝口ら 2016 原理1,2,4,6–9</p>
+  </aside>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  RV.header({ id: 'c4', chap: '第4章', title: '打撃の中心', libs: ['Matter.js', 'Tone.js'] });
+  if (window.Tone) RV.libOk('Tone.js');
+  if (!window.Matter) { RV.libOk('Matter.js', false); return; }
+  RV.libOk('Matter.js');
+  const { Engine, Bodies, Body, Composite, Constraint } = Matter;
+  const $ = s => document.querySelector(s);
+
+  // ---------------- 単位系 ----------------
+  // Matter は px と「1ステップ(1/60 s)あたり」の速度を使う。S [px/m] で換算する。
+  const S = 200, FPS = 60, G = 9.8;
+  const A = 0.5;                 // ボールの半径 a [m]
+  const MASS = 1.0;              // M [kg]
+  const GY = 1000;               // 床面の Matter y 座標
+  const BALL_X0 = 1.0;
+  const POCKET_X = 5.0, POCKET_W = 0.55, POCKET_D = 0.6;
+  const WALL_X = 10.0;
+  const FR = 0.02;               // Matter の friction 値（実効 μ は起動時に計測）
+  const toPx = (x, y) => ({ x: x * S, y: GY - y * S });
+
+  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const kBadge = RV.kappaBadge(stage);
+  const log = RV.causal('#causal');
+  let viewW = 800, viewH = 500, dpr = 1;
+  RV.fitCanvas(cv, (w, h, d) => { viewW = w; viewH = h; dpr = d; });
+  const bodyFont = getComputedStyle(document.body).fontFamily;
+
+  // ---------------- 世界の構築 ----------------
+  let engine, kappa = 1, ball = null, parts = [], center = null, I0 = 1;
+  let shot = null;        // {t, v0, w0, h, Ft, E0, tc, vc, loss, rec:[]}
+  let simT = 0, cueAnim = 0, done = false;
+  let muEff = null;
+
+  function makeStatic(engine) {
+    const o = { isStatic: true, friction: FR, frictionStatic: FR, label: 'floor' };
+    const leftLen = POCKET_X + 2;
+    const L = Bodies.rectangle((POCKET_X - 2) / 2 * S, GY + 50, leftLen * S, 100, o);
+    const rx0 = POCKET_X + POCKET_W, rLen = WALL_X + 2 - rx0;
+    const Rt = Bodies.rectangle((rx0 + rLen / 2) * S, GY + 50, rLen * S, 100, o);
+    const bottom = Bodies.rectangle((POCKET_X + POCKET_W / 2) * S, GY + POCKET_D * S + 10, POCKET_W * S, 20, o);
+    const wall = Bodies.rectangle((WALL_X + 0.1) * S, GY - 1 * S, 0.2 * S, 2 * S, { isStatic: true, friction: FR, restitution: 0.3 });
+    const back = Bodies.rectangle(-1.2 * S, GY - 1 * S, 0.2 * S, 2 * S, { isStatic: true });
+    Composite.add(engine.world, [L, Rt, bottom, wall, back]);
+  }
+
+  function buildWorld() {
+    engine = Engine.create();
+    engine.gravity.y = G * S / 1000;          // Matter の重力: g [px/ms²]·1000
+    engine.positionIterations = 10;
+    engine.velocityIterations = 10;
+    makeStatic(engine);
+    parts = []; ball = null; center = null;
+    const p = toPx(BALL_X0, A);
+    if (kappa >= 0.999) {
+      ball = Bodies.circle(p.x, p.y, A * S, { friction: FR, frictionStatic: FR, frictionAir: 0, restitution: 0, slop: 0.01 }, 100);
+      Body.setMass(ball, MASS);
+      Body.setInertia(ball, 0.5 * MASS * (A * S) ** 2);   // 円板 I=½Ma²（Matter既定の4倍スケールを使わない）
+      Composite.add(engine.world, ball);
+      I0 = 0.5 * MASS * A * A;
+    } else {
+      // 剛体でないボール：外周の粒子 + 中心粒子 を拘束（stiffness ∝ κ）でつなぐ
+      const n = 20, rp = 0.07, group = Body.nextGroup(true);
+      const mEach = MASS / (n + 1);
+      const opt = { friction: FR, frictionStatic: FR, frictionAir: 0, restitution: 0, slop: 0.01, collisionFilter: { group } };
+      center = Bodies.circle(p.x, p.y, rp * S, opt);
+      Body.setMass(center, mEach);
+      parts.push(center);
+      for (let i = 0; i < n; i++) {
+        const th = (i / n) * Math.PI * 2;
+        const b = Bodies.circle(p.x + Math.cos(th) * (A - rp) * S, p.y + Math.sin(th) * (A - rp) * S, rp * S, opt);
+        Body.setMass(b, mEach);
+        parts.push(b);
+      }
+      const st = 0.015 + 0.35 * kappa, dmp = 0.04;
+      const cons = [];
+      for (let i = 1; i <= n; i++) {
+        const j = i % n + 1, k = (i + 4 - 1) % n + 1;
+        cons.push(Constraint.create({ bodyA: parts[i], bodyB: parts[j], stiffness: st, damping: dmp }));
+        cons.push(Constraint.create({ bodyA: parts[i], bodyB: parts[k], stiffness: st * 0.6, damping: dmp }));
+        cons.push(Constraint.create({ bodyA: parts[0], bodyB: parts[i], stiffness: st, damping: dmp }));
+      }
+      Composite.add(engine.world, parts.concat(cons));
+      I0 = momentOfInertia();
+    }
+    // 着地させる
+    for (let i = 0; i < 40; i++) Engine.update(engine, 1000 / FPS);
+    simT = 0; shot = null; done = false; cueAnim = 0;
+  }
+
+  // ---------------- 計測（SI単位） ----------------
+  function bodies() { return ball ? [ball] : parts; }
+  function centroid() {
+    if (ball) return { x: ball.position.x / S, y: (GY - ball.position.y) / S, vx: ball.velocity.x * FPS / S, vy: -ball.velocity.y * FPS / S };
+    let m = 0, x = 0, y = 0, vx = 0, vy = 0;
+    for (const b of parts) { m += b.mass; x += b.mass * b.position.x; y += b.mass * b.position.y; vx += b.mass * b.velocity.x; vy += b.mass * b.velocity.y; }
+    return { x: x / m / S, y: (GY - y / m) / S, vx: vx / m * FPS / S, vy: -vy / m * FPS / S };
+  }
+  function momentOfInertia() {
+    if (ball) return 0.5 * MASS * A * A;
+    const c = centroid(); let I = 0;
+    for (const b of parts) { const dx = b.position.x / S - c.x, dy = (GY - b.position.y) / S - c.y; I += b.mass * (dx * dx + dy * dy); }
+    return I;
+  }
+  // 時計回り（右へ転がる向き）を正とした角速度 [rad/s]
+  function omega() {
+    if (ball) return ball.angularVelocity * FPS;
+    const c = centroid(); let L = 0;
+    for (const b of parts) {
+      const dx = b.position.x / S - c.x, dy = (GY - b.position.y) / S - c.y;
+      const vx = b.velocity.x * FPS / S - c.vx, vy = -b.velocity.y * FPS / S - c.vy;
+      L += b.mass * (dx * vy - dy * vx);    // 反時計回り正
+    }
+    return -L / momentOfInertia();
+  }
+  function kinetic() {
+    let E = 0;
+    if (ball) { const c = centroid(); return 0.5 * MASS * (c.vx ** 2 + c.vy ** 2) + 0.5 * I0 * omega() ** 2; }
+    for (const b of parts) { const vx = b.velocity.x * FPS / S, vy = b.velocity.y * FPS / S; E += 0.5 * b.mass * (vx * vx + vy * vy); }
+    return E;
+  }
+
+  // ---------------- 実効 μ の計測（見えない世界で h=a の撃力） ----------------
+  function calibrate() {
+    const keep = kappa; kappa = 1; buildWorld();
+    Body.setVelocity(ball, { x: 2 * S / FPS, y: 0 });
+    Body.setAngularVelocity(ball, 0);
+    const v0 = centroid().vx;
+    for (let i = 0; i < 6; i++) Engine.update(engine, 1000 / FPS);
+    const v1 = centroid().vx;
+    muEff = (v0 - v1) / (6 / FPS) / G;
+    kappa = keep;
+  }
+
+  // ---------------- 理論曲線 ----------------
+  function theory(sh, t) {
+    const mu = muEff, aw0 = A * sh.w0, v1 = sh.v0 - aw0;
+    const sgn = Math.sign(v1);
+    const tc = Math.abs(v1) / (3 * mu * G);        // 円板: 相対滑りの減り方 μg + 2μg
+    const tt = Math.min(t, tc);
+    return { v: sh.v0 - sgn * mu * G * tt, aw: aw0 + sgn * 2 * mu * G * tt, tc };
+  }
+
+  // ---------------- 撃つ ----------------
+  function hRatio() { return +$('#hS').value; }   // h/a
+  function shoot() {
+    if (shot || done) return;
+    const hr = hRatio(), Ft = +$('#pS').value, h = hr * A;
+    const v0 = Ft / MASS;
+    const w0 = (h - A) * Ft / (0.5 * MASS * A * A);   // 円板として理論値（式3-75）
+    log.reset();
+    log.add(`(I) キューが高さ h=${hr.toFixed(2)}a の点を撃力 Fτ=${Ft.toFixed(2)} N·s で突く（因果の起点）`, [3], { t: 0, force: true });
+    if (ball) {
+      Body.setVelocity(ball, { x: v0 * S / FPS, y: 0 });
+      Body.setAngularVelocity(ball, w0 / FPS);
+      log.add('剛体：撃力は瞬時に全体へ伝わり、重心は v₀=Fτ/M、回転は ω₀=(h−a)Fτ/I を同時に得る', [1, 4, 9], { t: 0, arrow: true });
+    } else {
+      // 打点付近の粒子にだけ撃力を配る（剛体でないので瞬時には全体へ伝わらない）
+      const hit = { x: (BALL_X0 - A) * S, y: GY - h * S };
+      const c0 = centroid();
+      hit.x = (c0.x - A) * S;
+      const sig = 0.18 * S;
+      const ws = parts.map(b => Math.exp(-(((b.position.x - hit.x) ** 2 + (b.position.y - hit.y) ** 2) / (sig * sig))));
+      const sw = ws.reduce((a, b) => a + b, 0);
+      parts.forEach((b, i) => {
+        const dv = Ft * (ws[i] / sw) / b.mass;
+        Body.setVelocity(b, { x: b.velocity.x + dv * S / FPS, y: b.velocity.y });
+      });
+      log.add('非剛体：打点のまわりの粒子だけが先に動く。反対側へはばね越しに遅れて伝わる', [2, 3], { t: 0, arrow: true });
+    }
+    shot = { t: 0, v0, w0, h, hr, Ft, E0: 0.5 * MASS * v0 * v0 + 0.5 * 0.5 * MASS * A * A * w0 * w0, tc: null, vc: null, loss: null, rec: [], meas0: null, slipLogged: false, stillT: 0 };
+    if (!ball) shot.E0 = kinetic();
+    simT = 0; cueAnim = 1;
+    RV.sfx.thud(0.5 + Ft / 6);
+    const v1 = v0 - A * w0;
+    $('#mV0').textContent = v0.toFixed(2) + ' m/s';
+    $('#mW0').textContent = (A * w0).toFixed(2) + ' m/s';
+    $('#mV1').textContent = v1.toFixed(2) + ' m/s';
+    ['#mTc', '#mVc', '#mLoss'].forEach(s => $(s).textContent = '…');
+  }
+
+  // ---------------- ステップ ----------------
+  function step() {
+    Engine.update(engine, 1000 / FPS);
+    if (cueAnim > 0) cueAnim = Math.max(0, cueAnim - 1 / 20);
+    if (!shot || done) return;
+    simT += 1 / FPS;
+    const c = centroid(), w = omega(), aw = A * w, v = c.vx;
+    if (shot.rec.length < 4 * FPS) shot.rec.push({ t: simT, v, aw, I: momentOfInertia() / I0 });
+    if (simT < 1 / FPS + 1e-6) {
+      shot.meas0 = { v, aw };
+      $('#mV0').textContent = v.toFixed(2) + ' m/s';
+      $('#mW0').textContent = aw.toFixed(2) + ' m/s';
+      $('#mV1').textContent = (v - aw).toFixed(2) + ' m/s';
+      const slip = v - aw;
+      if (Math.abs(slip) > 0.05) log.add(slip > 0
+        ? '接点が床の上を前へ滑る → 床を前に押す → 床は動かない → 後ろ向きの摩擦力を返す'
+        : '接点が床の上を後ろへ滑る（トップスピン過多）→ 床は前向きの摩擦力を返す', [2, 6, 7], { t: simT, arrow: true });
+      else log.add('接点の滑りはほぼ 0：最初から滑らずに転がる（打撃の中心を突いた）', [5], { t: simT, arrow: true });
+    }
+    // 滑り終わりの判定
+    if (shot.tc == null && simT > 2 / FPS && (Math.abs(v - aw) < 0.04 || simT > 2.0)) {
+      shot.tc = simT; shot.vc = v;
+      const E = kinetic();
+      shot.loss = Math.max(0, 1 - E / shot.E0);
+      log.add(`t_c=${simT.toFixed(2)} s：滑りが止まる → 摩擦力は仕事をしなくなる（以後は力学的エネルギー保存）`, [1, 2], { t: simT, arrow: true });
+      if (!ball) log.add(`I(t) は ${(Math.min(...shot.rec.map(r => r.I))).toFixed(2)}〜${(Math.max(...shot.rec.map(r => r.I))).toFixed(2)} I₀ で揺れた → 打撃の中心 x=I_G/(Mh) が一つに決まらない`, [], { t: simT, arrow: true });
+      $('#mTc').textContent = simT.toFixed(2) + ' s';
+      $('#mVc').textContent = v.toFixed(2) + ' m/s';
+      $('#mLoss').textContent = (shot.loss * 100).toFixed(1) + ' %';
+    }
+    // 終了判定
+    const inPocket = c.x > POCKET_X && c.x < POCKET_X + POCKET_W && c.y < A - 0.05;
+    const speed = Math.hypot(c.vx, c.vy);
+    if (speed < 0.03) shot.stillT += 1 / FPS; else shot.stillT = 0;
+    if (inPocket && shot.stillT > 0.4) finish(true);
+    else if ((shot.stillT > 0.6 && simT > 1) || simT > 18) finish(false);
+  }
+
+  function finish(inPocket) {
+    if (done) return;
+    done = true;
+    if (shot.loss == null) shot.loss = Math.max(0, 1 - kinetic() / shot.E0);
+    const th = ball ? [0.03, 0.10, 1.01] : [0.85, 0.92, 1.01]; // 非剛体は局所的な撃力でもともと大きく損をする
+    const stars = inPocket ? Math.max(1, RV.grade(shot.loss, th)) : 0;
+    if (inPocket) {
+      log.add('(II) 穴の縁と底（床に固定）が球を受け止め、反作用を返す', [6, 8], { t: simT, arrow: true });
+      RV.saveStars('c4', stars); RV.sfx.win();
+    } else RV.sfx.fail();
+    const vcTh = (2 * shot.hr / 3) * shot.v0;
+    const lessonRigid = `滑らない高さは円板で h=3a/2=${(1.5 * A).toFixed(2)} m（教科書の球なら h=7a/5）。そこを突けば、床との接点は最初から止まっていて、摩擦は仕事をしない。`;
+    const lessonSoft = `剛体でないボールは、突いた点のまわりだけが先に動き、形が揺れるあいだ慣性モーメント I が一定にならない。教科書の打撃の中心 x=I_G/(Mh) は「I が一定」を前提にしているので、どの高さで突いても滑りや内部振動の損失をゼロにできない。`;
+    RV.modal(inPocket ? `ポケット！ ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '入らなかった',
+      `<table class="formula" style="width:100%">
+        <tr><td></td><td>理論（円板）</td><td>実測</td></tr>
+        <tr><td>v₀</td><td>${shot.v0.toFixed(2)}</td><td>${shot.meas0 ? shot.meas0.v.toFixed(2) : '—'} m/s</td></tr>
+        <tr><td>aω₀</td><td>${(A * shot.w0).toFixed(2)}</td><td>${shot.meas0 ? shot.meas0.aw.toFixed(2) : '—'} m/s</td></tr>
+        <tr><td>t_c</td><td>${theory(shot, 0).tc.toFixed(2)}</td><td>${shot.tc != null ? shot.tc.toFixed(2) : '—'} s</td></tr>
+        <tr><td>v_c</td><td>${vcTh.toFixed(2)}</td><td>${shot.vc != null ? shot.vc.toFixed(2) : '—'} m/s</td></tr>
+        <tr><td>滑り損失</td><td>${(theoryLoss(shot) * 100).toFixed(1)} %</td><td>${(shot.loss * 100).toFixed(1)} %</td></tr>
+      </table>
+      <p class="note">${ball ? lessonRigid : lessonSoft}</p>
+      ${!inPocket ? '<p class="note">ヒント：ポケットに落ちるのは、転がる速さがだいたい 1.0〜1.6 m/s のとき。v_c=(2h/3a)v₀ を使って力積を決めよう。</p>' : ''}`,
+      [{ label: 'もう一度', primary: true, onClick: resetBall }, { label: '閉じる' }]);
+  }
+  function theoryLoss(sh) {
+    const vc = (2 * sh.hr / 3) * sh.v0;
+    const Ec = 0.5 * MASS * vc * vc + 0.5 * (0.5 * MASS * A * A) * (vc / A) ** 2;
+    return Math.max(0, 1 - Ec / sh.E0);
+  }
+
+  function resetBall() {
+    buildWorld();
+    log.reset();
+    ['#mV0', '#mW0', '#mV1', '#mTc', '#mVc', '#mLoss'].forEach(s => $(s).textContent = '—');
+  }
+
+  // ---------------- 描画 ----------------
+  function render() {
+    const w = viewW, h = viewH;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineWidth = 1;
+    const x0 = -1.4, x1 = WALL_X + 0.4;
+    const sc = Math.min((w - 20) / (x1 - x0), h / 4.2);
+    const ox = 10 - x0 * sc, floorY = h * 0.72;
+    const X = x => ox + x * sc, Y = y => floorY - y * sc;
+    const fromPx = p => ({ x: X(p.x / S), y: Y((GY - p.y) / S) });
+    ctx.font = '11px ' + bodyFont;
+
+    // 床とポケット
+    ctx.fillStyle = '#1e2630';
+    ctx.fillRect(X(-1.1), Y(0), X(POCKET_X) - X(-1.1), 6);
+    ctx.fillRect(X(POCKET_X + POCKET_W), Y(0), X(WALL_X) - X(POCKET_X + POCKET_W), 6);
+    ctx.fillStyle = '#121820';
+    ctx.fillRect(X(POCKET_X), Y(0), X(POCKET_X + POCKET_W) - X(POCKET_X), POCKET_D * sc);
+    ctx.strokeStyle = '#ffd166'; ctx.setLineDash([4, 3]);
+    ctx.strokeRect(X(POCKET_X), Y(0), X(POCKET_X + POCKET_W) - X(POCKET_X), POCKET_D * sc);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'center';
+    ctx.fillText('ポケット', X(POCKET_X + POCKET_W / 2), Y(-POCKET_D) + 16);
+    ctx.fillStyle = '#2b3542'; ctx.fillRect(X(WALL_X), Y(2), 0.2 * sc, 2 * sc);
+    ctx.fillStyle = '#56606c'; ctx.textAlign = 'left';
+    for (let m = 0; m <= 9; m++) { ctx.fillRect(X(m), Y(0) + 6, 1, 5); ctx.fillText(m + 'm', X(m) + 2, Y(0) + 20); }
+
+    // ボール
+    if (ball) {
+      const p = fromPx(ball.position), r = A * sc;
+      ctx.fillStyle = 'rgba(92,200,255,.18)'; ctx.strokeStyle = '#5cc8ff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 1.2;
+      for (let k = 0; k < 4; k++) {
+        const th = ball.angle + k * Math.PI / 2;
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(th) * r, p.y + Math.sin(th) * r); ctx.stroke();
+      }
+      ctx.fillStyle = '#ff7a45';
+      ctx.beginPath(); ctx.arc(p.x + Math.cos(ball.angle) * r * 0.8, p.y + Math.sin(ball.angle) * r * 0.8, 4, 0, Math.PI * 2); ctx.fill();
+    } else if (parts.length) {
+      const pts = parts.slice(1).map(b => fromPx(b.position));
+      ctx.fillStyle = 'rgba(255,122,69,.18)'; ctx.strokeStyle = '#ff7a45'; ctx.lineWidth = 2;
+      ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath(); ctx.fill(); ctx.stroke();
+      const c0 = fromPx(parts[0].position);
+      ctx.strokeStyle = 'rgba(255,122,69,.4)'; ctx.lineWidth = 1;
+      pts.forEach(q => { ctx.beginPath(); ctx.moveTo(c0.x, c0.y); ctx.lineTo(q.x, q.y); ctx.stroke(); });
+      ctx.fillStyle = '#ff7a45';
+      parts.forEach(b => { const q = fromPx(b.position); ctx.beginPath(); ctx.arc(q.x, q.y, 0.07 * sc, 0, Math.PI * 2); ctx.fill(); });
+    }
+
+    // 打点ガイドとキュー（撃つ前）
+    const c = centroid();
+    const bx = X(c.x), by = Y(c.y), r = A * sc;
+    if (!shot || cueAnim > 0) {
+      const hr = shot ? shot.hr : hRatio();
+      const hy = Y(hr * A);
+      const guides = [[1.5, '#6fdc8c', '3a/2（円板）', -5], [1.4, '#ffd166', '7a/5（球）', 11], [1.0, '#56606c', '重心', 4]];
+      ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+      for (const [g, col, lab, dy] of guides) {
+        ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(bx - r - 70, Y(g * A)); ctx.lineTo(bx + r + 6, Y(g * A)); ctx.stroke();
+        ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.fillText(lab, bx + r + 8, Y(g * A) + dy);
+      }
+      ctx.setLineDash([]);
+      const back = shot ? (1 - cueAnim) * 30 : 18;
+      const tip = bx - Math.sqrt(Math.max(0, r * r - (hy - by) ** 2)) - back;
+      ctx.strokeStyle = '#d9b48a'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(tip - 160, hy); ctx.lineTo(tip, hy); ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.fillStyle = '#e6ebf1'; ctx.textAlign = 'right';
+      ctx.textAlign = 'left';
+      ctx.fillText(`h = ${hr.toFixed(2)}a`, Math.max(4, tip - 160), hy - 10);
+    }
+
+    // 右上：v(t), aω(t) のグラフ
+    const narrow = w < 700;
+    const gx = narrow ? 10 : w - 300, gw = narrow ? w - 20 : 280;
+    const gy = narrow ? Y(-POCKET_D) + 28 : 14, gh = narrow ? Math.max(60, Math.min(150, h - gy - 8)) : 150;
+    ctx.fillStyle = 'rgba(16,21,27,.9)'; ctx.fillRect(gx, gy, gw, gh);
+    ctx.strokeStyle = '#2b3542'; ctx.strokeRect(gx, gy, gw, gh);
+    ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
+    ctx.fillText('v(t) 青 ／ aω(t) 橙 ／ 破線＝理論', gx + 6, gy + 13);
+    if (!shot) { ctx.fillStyle = '#56606c'; ctx.fillText('突くと、ここに速度の時間変化が描かれる', gx + 6, gy + 34); }
+    if (shot && shot.rec.length) {
+      const T = 2.0, Vm = Math.max(1, shot.v0 * 1.1, Math.abs(A * shot.w0) * 1.1);
+      const PX = t => gx + 6 + t / T * (gw - 12), PY = v => gy + gh - 8 - (v / Vm) * (gh - 28);
+      const line = (key, col, dash) => {
+        ctx.strokeStyle = col; ctx.setLineDash(dash || []); ctx.lineWidth = 1.5; ctx.beginPath();
+        let first = true;
+        for (const r2 of shot.rec) { if (r2.t > T) break; const q = [PX(r2.t), PY(r2[key])]; first ? ctx.moveTo(...q) : ctx.lineTo(...q); first = false; }
+        ctx.stroke(); ctx.setLineDash([]);
+      };
+      line('v', '#5cc8ff'); line('aw', '#ff7a45');
+      if (muEff && ball) {
+        for (const [key, col] of [['v', '#5cc8ff'], ['aw', '#ff7a45']]) {
+          ctx.strokeStyle = col; ctx.setLineDash([4, 4]); ctx.beginPath();
+          for (let i = 0; i <= 60; i++) { const t = i / 60 * T, th = theory(shot, t); const q = [PX(t), PY(th[key])]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); }
+          ctx.stroke(); ctx.setLineDash([]);
+        }
+      }
+      if (!ball) {
+        ctx.strokeStyle = '#6fdc8c'; ctx.lineWidth = 1; ctx.beginPath();
+        shot.rec.forEach((r2, i) => { if (r2.t > T) return; const q = [PX(r2.t), gy + gh - 8 - (r2.I - 0.5) * (gh - 28)]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); });
+        ctx.stroke();
+        ctx.fillStyle = '#6fdc8c'; ctx.fillText('緑＝I(t)/I₀', gx + gw - 80, gy + 13);
+      }
+    }
+
+    $('#mI').textContent = (momentOfInertia() / I0).toFixed(3);
+  }
+
+  // ---------------- UI ----------------
+  function updLabels() {
+    $('#hV').textContent = hRatio().toFixed(2) + 'a';
+    $('#pV').textContent = (+$('#pS').value).toFixed(2) + ' N·s';
+  }
+  $('#hS').oninput = updLabels; $('#pS').oninput = updLabels; updLabels();
+  $('#shootBtn').onclick = shoot;
+  $('#resetBtn').onclick = resetBall;
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !document.querySelector('.rv-modal-bg')) { e.preventDefault(); shoot(); }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (shot) return;
+    const rect = cv.getBoundingClientRect();
+    const sc = Math.min((viewW - 20) / (WALL_X + 0.4 + 1.4), viewH / 4.2);
+    const floorY = viewH * 0.72;
+    const hr = (floorY - (e.clientY - rect.top)) / sc / A;
+    if (hr >= 0.2 && hr <= 1.9) { $('#hS').value = hr.toFixed(2); updLabels(); }
+  });
+  function setLevel(k) {
+    kappa = k; kBadge.set(k);
+    document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
+    $('#levelNote').textContent = k >= 0.999
+      ? '剛体の円板。I=½Ma² は一定で、打撃の中心がはっきり決まる。'
+      : `外周20粒子＋中心1粒子を、拘束の硬さ ${(0.015 + 0.35 * k).toFixed(3)} でつないだ「かつてボールだったもの」。I は形とともに揺れる。`;
+    resetBall();
+  }
+  document.querySelectorAll('#levels button').forEach(b => b.onclick = () => setLevel(+b.dataset.k));
+
+  calibrate();
+  $('#mMu').textContent = muEff.toFixed(3);
+  setLevel(1);
+  RV.loop(step, render, 1 / FPS);
+
+  window.__c4 = {
+    get state() { return { simT, done, shot: shot && { v0: shot.v0, w0: shot.w0, tc: shot.tc, vc: shot.vc, loss: shot.loss, meas0: shot.meas0 }, c: centroid(), muEff, kappa }; },
+    setLevel, shoot, set(h, p) { $('#hS').value = h; $('#pS').value = p; updLabels(); }
+  };
+
+  RV.modal('第4章 打撃の中心',
+    `<p>剛体が消えかけた世界でも、まだ<b>ボール</b>は丸い。だが、それもいつまで持つか。</p>
+     <p>静止した剛体に撃力を加えると、重心は <i>Mv₀=Fτ</i>、重心まわりの回転は <i>I_Gω₀=(h−a)Fτ</i> を得る（教科書 3.8）。ちょうどよい高さを突けば、床との接点は最初から止まっていて、ボールは<b>滑らずに</b>転がり出す。その点が床との接点に対する<b>打撃の中心</b>だ。</p>
+     <p><b>目的：</b>1回突いてボールを 5 m 先のポケットに落とす。滑りによる損失が小さいほど★が増える。Lv2・Lv3 ではボールが剛体でなくなる。</p>`,
+    [{ label: 'はじめる', primary: true }]);
+})();
+</script>
+</body>
+</html>

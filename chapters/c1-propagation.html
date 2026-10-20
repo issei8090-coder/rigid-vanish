@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>透過伝達性の喪失</title>
+<link rel="stylesheet" href="../shared/common.css">
+<script src="../shared/common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<style>
+  .window-info { font-family: var(--mono); font-size: 12px; }
+  .hold { user-select: none; touch-action: none; }
+</style>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション</h2>
+      <p>列の先頭のブロックを手で押し、<b>最後尾のブロック</b>を鐘に当てて鳴らせ。鐘が開くのは<b>時間窓</b>の間だけ。当たる速さは <b>0.8 m/s 以上</b>必要。</p>
+      <p class="note">剛体なら押した瞬間に列全体が動く。剛体でなくなると、力が伝わるまでに時間がかかる。そのぶん早めに押しはじめること。</p>
+    </div>
+    <div class="panel">
+      <h2>レベル（剛性 κ）</h2>
+      <div class="seg" id="levels">
+        <button data-k="1" class="on">Lv1 κ=1.00</button>
+        <button data-k="0.35">Lv2 κ=0.35</button>
+        <button data-k="0.08">Lv3 κ=0.08</button>
+      </div>
+      <p class="note" id="levelNote"></p>
+    </div>
+    <div class="panel">
+      <h2>操作</h2>
+      <div class="btns">
+        <button class="btn primary" id="startBtn">ラウンド開始</button>
+        <button class="btn hold" id="pushBtn" disabled>押す（長押し / Space）</button>
+      </div>
+      <p class="window-info" id="winInfo">—</p>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">経過時間</div><div class="v" id="mT">0.00 s</div></div>
+        <div class="meter"><div class="k">手が感じる反作用</div><div class="v" id="mF">0 N</div></div>
+        <div class="meter"><div class="k">伝播遅延（実測）</div><div class="v" id="mDelay">—</div></div>
+        <div class="meter"><div class="k">伝播遅延（理論）</div><div class="v" id="mDelayTh">—</div></div>
+        <div class="meter"><div class="k">最後尾の速さ</div><div class="v" id="mV">0.00 m/s</div></div>
+        <div class="meter"><div class="k">反作用の最大値（鐘の前）</div><div class="v" id="mFmax">0 N</div></div>
+      </div>
+      <div style="position:relative;height:150px"><canvas id="forceChart"></canvas></div>
+      <p class="note">赤い破線は 100 N。剛体でない列（豆腐やのれんのようなもの）は、先頭のブロックだけが <i>mα</i> を返すので、100 N で押すことができない（原理5）。</p>
+    </div>
+    <div class="panel">
+      <h2>因果ログ（溝口ら 2016 §6.2 の手順）</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>理論</h2>
+      <div class="formula">剛体（κ=1）：原理4「剛体は与えられた力を瞬時に伝達する」
+  → 押した瞬間に全質量 M=Nm が加速する
+  → 手に返る反作用 −F = −Mα
+
+非剛体（ばね定数 k の質点列）：
+  波の速さ  c = a√(k/m)     （a: ブロック間隔）
+  先頭→最後尾の到達時間  Δt ≈ (N−1)√(m/k)
+  手に返る反作用は、まだ動いていない部分の質量を含まない
+
+重心の運動方程式  M d²r_G/dt² = Σ F_i   (3-3)</div>
+    </div>
+    <p class="ref">参考: 小原「力学A 第3章 剛体」(兵庫県立大) 3.1, 3.4 ／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016, 4.1 §3, 4.2, 6.2</p>
+  </aside>
+</main>
+
+<script type="module">
+import RAPIER from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier2d-compat@0.14.0/rapier.es.js';
+
+RV.header({ id: 'c1', chap: '第1章', title: '透過伝達性の喪失', libs: ['Rapier2D', 'Chart.js', 'Tone.js'] });
+if (window.Chart) RV.libOk('Chart.js');
+if (window.Tone) RV.libOk('Tone.js');
+
+try { await RAPIER.init(); RV.libOk('Rapier2D'); }
+catch (e) { RV.libOk('Rapier2D', false); throw e; }
+
+// ---------------- 定数（SI単位） ----------------
+const N = 8;              // ブロック数
+const W = 0.4;            // ブロック幅 [m]
+const GAP = 0.4;          // 隙間 [m]
+const A = W + GAP;        // 間隔 a
+const M_BLOCK = 1.0;      // 1個の質量 [kg]
+const K0 = 400;           // κ=1 相当のばね定数（κ<1 で k = κ·K0）
+const X0 = 1.0;           // 先頭ブロック左端の初期位置
+const BELL_X = X0 + N * W + (N - 1) * GAP + 0.8; // 鐘の面
+const HAND_V = 2.0;       // 手を押し出す速さ [m/s]
+const HAND_STROKE = 2.2;  // 手が伸ばせる最大距離 [m]
+const K_HAND = 1500;      // 手（指）のやわらかさ [N/m]
+const C_HAND = 30;
+const F_MAX = 300;        // 筋力の上限 [N]
+const V_MIN = 0.8;        // 鐘を鳴らす最低速度
+const WIN_W = 0.40;       // 時間窓の幅 [s]
+const DT = 1 / 120;
+const V_ARRIVE = 0.5 * HAND_V; // 「動き出した」とみなす速さ（手の速さの半分）
+// 衝突グループ：ブロック同士は当たらない（力はばねだけで伝わる）。ブロックと鐘だけが当たる
+const G_BLOCK = (0x0001 << 16) | 0x0002, G_BELL = (0x0002 << 16) | 0x0001;
+
+const stage = document.getElementById('stage');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const kBadge = RV.kappaBadge(stage);
+const log = RV.causal('#causal');
+const $ = s => document.querySelector(s);
+
+let viewW = 800, viewH = 500, dpr = 1;
+const bodyFont = getComputedStyle(document.body).fontFamily;
+RV.fitCanvas(cv, (w, h, d) => { viewW = w; viewH = h; dpr = d; });
+
+// ---------------- 状態 ----------------
+let kappa = 1;
+let world, blocks = [], rigidBody = null, bell;
+let state = 'idle';         // idle | running | done
+let t = 0, holding = false, handX = X0, contact = false;
+let winOpen = 0, firstContactT = null, firstMovedT = null, lastMovedT = null, hitT = null, hitV = 0;
+let moved = [], Fhand = 0, Fmax = 0;
+let heat = [];              // 時空図: [{t, v:[...]}]
+const forceData = [], lineData = [];
+
+function initialX(i) { return X0 + i * A + W / 2; } // 中心位置
+
+function buildWorld() {
+  if (world) world.free();
+  world = new RAPIER.World({ x: 0, y: 0 });   // 摩擦なし床：水平方向だけを扱う
+  world.timestep = DT;
+  blocks = []; rigidBody = null;
+  const density = M_BLOCK / (W * W);
+  if (kappa >= 0.999) {
+    // κ=1：8個のコライダーをもつ「ひとつの」剛体
+    rigidBody = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 0).lockRotations());
+    for (let i = 0; i < N; i++) {
+      world.createCollider(RAPIER.ColliderDesc.cuboid(W / 2, W / 2).setTranslation(initialX(i), 0)
+        .setDensity(density).setFriction(0).setRestitution(0.1).setCollisionGroups(G_BLOCK), rigidBody);
+      blocks.push({ i, off: initialX(i) });
+    }
+  } else {
+    const k = kappa * K0;
+    const c = 2 * 0.04 * Math.sqrt(k * M_BLOCK); // 弱い減衰
+    for (let i = 0; i < N; i++) {
+      const b = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(initialX(i), 0).lockRotations());
+      world.createCollider(RAPIER.ColliderDesc.cuboid(W / 2, W / 2).setDensity(density).setFriction(0).setRestitution(0.1).setCollisionGroups(G_BLOCK), b);
+      blocks.push({ i, body: b });
+    }
+    for (let i = 0; i < N - 1; i++) {
+      world.createImpulseJoint(RAPIER.JointData.spring(A, k, c, { x: 0, y: 0 }, { x: 0, y: 0 }),
+        blocks[i].body, blocks[i + 1].body, true);
+    }
+  }
+  bell = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(BELL_X + 0.15, 0));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(0.15, 0.6).setFriction(0).setRestitution(0.3).setCollisionGroups(G_BELL), bell);
+}
+
+function bx(i) { return rigidBody ? rigidBody.translation().x + blocks[i].off : blocks[i].body.translation().x; }
+function bv(i) { return rigidBody ? rigidBody.linvel().x : blocks[i].body.linvel().x; }
+function pushBody() { return rigidBody || blocks[0].body; }
+
+function theoryDelay() { return kappa >= 0.999 ? 0 : (N - 1) * Math.sqrt(M_BLOCK / (kappa * K0)); }
+
+function setLevel(k) {
+  kappa = k;
+  kBadge.set(k);
+  document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
+  $('#levelNote').textContent = k >= 0.999
+    ? '列は一体の剛体（コライダー8個をもつ剛体1つ）。2点間の距離は変わらない。'
+    : `ブロック同士は ばね定数 k = ${(k * K0).toFixed(0)} N/m のばねでつながっている。剛体はもうない。`;
+  $('#mDelayTh').textContent = theoryDelay().toFixed(3) + ' s';
+  resetRound();
+}
+
+function resetRound() {
+  buildWorld();
+  state = 'idle'; t = 0; holding = false; handX = X0; contact = false;
+  firstContactT = null; firstMovedT = null; lastMovedT = null; hitT = null; hitV = 0;
+  moved = new Array(N).fill(false); Fhand = 0; Fmax = 0; heat = [];
+  forceData.length = 0; lineData.length = 0; chart && chart.update('none');
+  log.reset();
+  $('#pushBtn').disabled = true;
+  $('#startBtn').disabled = false;
+  $('#winInfo').textContent = '「ラウンド開始」を押すと、鐘が開く時刻が決まる。';
+  $('#mDelay').textContent = '—';
+}
+
+function startRound() {
+  resetRound();
+  state = 'running';
+  winOpen = 2.4 + Math.random() * 1.8;
+  $('#pushBtn').disabled = false;
+  $('#startBtn').disabled = true;
+  $('#winInfo').textContent = `鐘が開くのは t = ${winOpen.toFixed(2)} 〜 ${(winOpen + WIN_W).toFixed(2)} s（中心 ${(winOpen + WIN_W / 2).toFixed(2)} s）`;
+  log.add('(I) 手が先頭ブロックに力を加えようとする（因果の起点）', [9], { t: 0, force: true });
+}
+
+// ---------------- 物理ステップ ----------------
+function step() {
+  if (state !== 'running') return;
+  t += DT;
+  // 手は押しているあいだ一定速度で前に出る（行程の上限あり）、離すと引っ込む
+  if (holding) handX = Math.min(X0 + HAND_STROKE, handX + HAND_V * DT);
+  else handX = Math.max(X0 - 0.4, handX - HAND_V * DT);
+
+  const frontLeft = bx(0) - W / 2;
+  const comp = handX - frontLeft;
+  const prevContact = contact;
+  if (comp > 0) {
+    const relV = (holding ? HAND_V : -HAND_V) - bv(0);
+    Fhand = Math.min(F_MAX, Math.max(0, K_HAND * comp + C_HAND * relV));
+    contact = Fhand > 0;
+  } else { Fhand = 0; contact = false; }
+  if (Fhand > 0) pushBody().applyImpulse({ x: Fhand * DT, y: 0 }, true);
+  if (hitT == null) Fmax = Math.max(Fmax, Fhand); // 鐘に当たる前（列が自由に動ける間）の最大値
+
+  world.step();
+
+  // ---- 因果ログ（§6.2 の (I)〜(IV)） ----
+  if (contact && !prevContact) {
+    if (firstContactT == null) firstContactT = t;
+    log.add(`手→ブロック1 に作用 F（手の筋力が起点）`, [3], { t, arrow: true });
+  }
+  for (let i = 0; i < N; i++) {
+    if (!moved[i] && bv(i) > V_ARRIVE) {
+      moved[i] = true;
+      if (kappa >= 0.999 && i === 0) {
+        log.add(`(IV-2) 剛体：ブロック1〜${N} は一体。力は瞬時に全体へ伝わる`, [4], { t, arrow: true });
+        log.add(`(IV-1) 全質量 M=${N * M_BLOCK} kg が加速 α → 反作用 −Mα を手に返す`, [1, 2, 5], { t, arrow: true });
+      } else if (kappa < 0.999) {
+        if (i < N - 1) log.add(`(IV-2) ブロック${i + 1} が動いた → 前方のブロック${i + 2} をばね越しに押す`, [2, 3], { t, arrow: true });
+        else log.add(`(IV-1) ブロック${N} の前には何もない → 加速し −mα を返す`, [1, 2, 5], { t, arrow: true });
+      }
+      if (i === 0) firstMovedT = t;
+      if (i === N - 1) lastMovedT = t;
+    }
+  }
+  if (lastMovedT != null && firstMovedT != null && $('#mDelay').textContent === '—') {
+    $('#mDelay').textContent = (lastMovedT - firstMovedT).toFixed(3) + ' s';
+  }
+
+  // ---- 鐘への到達 ----
+  const lastRight = bx(N - 1) + W / 2;
+  if (hitT == null && lastRight >= BELL_X - 0.005) {
+    hitT = t; hitV = bv(N - 1);
+    log.add(`(II) 鐘は動かない（床に固定）→ 押された力と同じ大きさの反作用を返す`, [2, 6, 7, 8], { t, arrow: true });
+    const open = t >= winOpen && t <= winOpen + WIN_W;
+    if (open && hitV >= V_MIN) RV.sfx.bell(); else RV.sfx.thud(0.6);
+    setTimeout(finish, 600);
+  }
+  if (hitT == null && t > winOpen + WIN_W + 3) finish();
+
+  // ---- 記録 ----
+  if (Math.round(t / DT) % 2 === 0) {
+    const vs = []; for (let i = 0; i < N; i++) vs.push(bv(i));
+    heat.push({ t, v: vs });
+    if (heat.length > 900) heat.shift();
+    forceData.push({ x: t, y: Fhand });
+  }
+}
+
+function finish() {
+  if (state !== 'running') return;
+  state = 'done';
+  holding = false;
+  $('#pushBtn').disabled = true;
+  $('#startBtn').disabled = false;
+  const center = winOpen + WIN_W / 2;
+  const measDelay = (lastMovedT != null && firstMovedT != null) ? lastMovedT - firstMovedT : null;
+  let stars = 0, verdict;
+  if (hitT == null) verdict = '最後尾のブロックは鐘に届かなかった。';
+  else if (hitV < V_MIN) verdict = `鐘に当たったが、速さ ${hitV.toFixed(2)} m/s では鳴らない（0.8 m/s 以上が必要）。`;
+  else if (hitT < winOpen || hitT > winOpen + WIN_W) verdict = `鐘はまだ／もう閉じていた（当たった時刻 ${hitT.toFixed(3)} s）。`;
+  else {
+    stars = Math.max(1, RV.grade(Math.abs(hitT - center), [0.05, 0.12, WIN_W / 2]));
+    verdict = `鐘が鳴った！ 窓の中心からのずれ ${(Math.abs(hitT - center) * 1000).toFixed(0)} ms。`;
+  }
+  if (stars > 0) { RV.saveStars('c1', stars); RV.sfx.win(); } else RV.sfx.fail();
+  const lesson = kappa >= 0.999
+    ? '剛体の列では、押した瞬間に最後尾まで動き出した（遅延 0）。原理4「透過伝達性」がそのまま成り立つ世界だ。そのかわり、手は列全体の質量ぶんの反作用を受けた。'
+    : `剛体がない列では、力が波として伝わり、最後尾が動き出すまでに ${measDelay != null ? measDelay.toFixed(3) : '—'} s かかった（理論 ${theoryDelay().toFixed(3)} s）。F が原因で α が結果だという因果が、時間のずれとして目に見える（論文 4.1 §3）。手に返る反作用も、まだ動いていない後ろのブロックの質量を含まない。`;
+  RV.modal(stars > 0 ? `成功 ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '失敗',
+    `<p>${verdict}</p>
+     <table class="formula" style="width:100%">
+      <tr><td>伝播遅延 理論</td><td>${theoryDelay().toFixed(3)} s</td></tr>
+      <tr><td>伝播遅延 実測</td><td>${measDelay != null ? measDelay.toFixed(3) + ' s' : '—'}</td></tr>
+      <tr><td>手に返った反作用の最大値（鐘に当たる前）</td><td>${Fmax.toFixed(0)} N ${Fmax < 100 ? '（100 N に届かない）' : ''}</td></tr>
+      <tr><td>当たった速さ</td><td>${hitT != null ? hitV.toFixed(2) + ' m/s' : '—'}</td></tr>
+     </table>
+     <p class="note">${lesson}</p>`,
+    [{ label: 'もう一度', primary: true, onClick: startRound }, { label: '閉じる' }]);
+}
+
+// ---------------- 描画 ----------------
+function render() {
+  const w = viewW, h = viewH;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const sceneH = h * 0.56;
+  const worldW = BELL_X + 0.9;
+  const s = Math.min((w - 24) / worldW, sceneH / 2.2);
+  const ox = 12 + (w - 24 - worldW * s) / 2;
+  const gy = sceneH * 0.62;            // 床の高さ（ブロック中心の y）
+  const X = x => ox + x * s;
+
+  // 床
+  ctx.fillStyle = '#1a2129'; ctx.fillRect(0, gy + W / 2 * s, w, 4);
+  ctx.fillStyle = '#56606c'; ctx.font = '11px ' + bodyFont; ctx.textAlign = 'left';
+  ctx.fillText('摩擦なしの床', 14, gy + W / 2 * s + 18);
+
+  // ばね
+  if (!rigidBody && blocks.length) {
+    ctx.strokeStyle = '#ff7a45'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < N - 1; i++) {
+      const xa = X(bx(i) + W / 2), xb = X(bx(i + 1) - W / 2);
+      ctx.beginPath();
+      const segs = 8;
+      for (let j = 0; j <= segs; j++) {
+        const xx = xa + (xb - xa) * j / segs;
+        const yy = gy + (j % 2 ? -1 : 1) * (j === 0 || j === segs ? 0 : 5);
+        j ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
+      }
+      ctx.stroke();
+    }
+  }
+  // ブロック（速度で色付け）
+  for (let i = 0; i < blocks.length; i++) {
+    const v = bv(i);
+    const c = Math.min(1, Math.abs(v) / 3);
+    ctx.fillStyle = rigidBody ? `rgba(92,200,255,${0.35 + 0.5 * c})` : `rgba(255,122,69,${0.3 + 0.6 * c})`;
+    ctx.strokeStyle = rigidBody ? '#5cc8ff' : '#ff7a45';
+    ctx.lineWidth = 1.5;
+    const x = X(bx(i) - W / 2), y = gy - W / 2 * s;
+    ctx.fillRect(x, y, W * s, W * s); ctx.strokeRect(x, y, W * s, W * s);
+    ctx.fillStyle = '#e6ebf1'; ctx.textAlign = 'center';
+    ctx.fillText(String(i + 1), x + W * s / 2, gy + 4);
+  }
+  if (rigidBody) {
+    ctx.strokeStyle = '#5cc8ff'; ctx.setLineDash([4, 4]);
+    ctx.strokeRect(X(bx(0) - W / 2) - 4, gy - W / 2 * s - 4, (bx(N - 1) - bx(0) + W) * s + 8, W * s + 8);
+    ctx.setLineDash([]);
+  }
+  // 手
+  const hx = X(handX);
+  ctx.fillStyle = holding ? '#ffd166' : '#8d9aab';
+  ctx.fillRect(hx - 40, gy - 8, 40, 16);
+  ctx.beginPath(); ctx.arc(hx - 2, gy, 10, -Math.PI / 2, Math.PI / 2); ctx.fill();
+  if (Fhand > 0) {
+    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'right';
+    ctx.fillText(`反作用 ${Fhand.toFixed(0)} N`, hx - 4, gy - 16);
+  }
+  // 鐘
+  const open = state === 'running' && t >= winOpen && t <= winOpen + WIN_W;
+  const bxp = X(BELL_X);
+  ctx.fillStyle = open ? '#ffd166' : (hitT != null ? '#6fdc8c' : '#3a4756');
+  ctx.beginPath();
+  ctx.moveTo(bxp, gy - 0.6 * s); ctx.quadraticCurveTo(bxp + 0.5 * s, gy - 0.6 * s, bxp + 0.3 * s, gy + 0.6 * s);
+  ctx.lineTo(bxp, gy + 0.6 * s); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e6ebf1'; ctx.textAlign = 'center';
+  ctx.fillText(open ? '開！' : '鐘', bxp + 0.18 * s, gy - 0.7 * s);
+
+  // 時間窓バー
+  const barY = w < 700 ? 82 : 14, barX0 = w < 700 ? 14 : w * 0.3, barW = w < 700 ? w - 28 : w * 0.62, Tmax = 8;
+  const tx = tt => barX0 + Math.min(1, tt / Tmax) * barW;
+  ctx.fillStyle = '#1b222b'; ctx.fillRect(barX0, barY, barW, 10);
+  if (state !== 'idle') {
+    ctx.fillStyle = 'rgba(255,209,102,.7)'; ctx.fillRect(tx(winOpen), barY, tx(winOpen + WIN_W) - tx(winOpen), 10);
+    ctx.fillStyle = '#e6ebf1'; ctx.fillRect(tx(t) - 1, barY - 3, 2, 16);
+    if (hitT != null) { ctx.fillStyle = '#6fdc8c'; ctx.fillRect(tx(hitT) - 1, barY - 3, 3, 16); }
+  }
+  ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
+  ctx.fillText(`t = ${t.toFixed(2)} s`, barX0, barY + 24);
+
+  // ---- 時空図（ブロック番号 × 時間、色＝速度） ----
+  const hy0 = sceneH + 26, hh = h - hy0 - 26;
+  ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
+  ctx.fillText(w < 700 ? '時空図（縦＝ブロック、横＝時間、明るさ＝速度）' : '時空図：縦＝ブロック番号、横＝時間、明るさ＝速度（剛体なら縦一直線、非剛体なら斜めの波）', 14, hy0 - 8);
+  const hx0 = 40, hw = w - 56;
+  ctx.fillStyle = '#10151b'; ctx.fillRect(hx0, hy0, hw, hh);
+  const rowH = hh / N, span = 6;
+  for (const f of heat) {
+    const px = hx0 + (f.t / span) * hw;
+    if (px > hx0 + hw) continue;
+    for (let i = 0; i < N; i++) {
+      const v = Math.max(0, Math.min(1, Math.abs(f.v[i]) / 3));
+      if (v < 0.01) continue;
+      ctx.fillStyle = rigidBody ? `rgba(92,200,255,${v})` : `rgba(255,122,69,${v})`;
+      ctx.fillRect(px, hy0 + (N - 1 - i) * rowH, Math.max(1.5, hw / (span * 60)), rowH - 1);
+    }
+  }
+  ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'right';
+  for (let i = 0; i < N; i++) ctx.fillText(String(i + 1), hx0 - 6, hy0 + (N - 1 - i) * rowH + rowH / 2 + 4);
+  ctx.textAlign = 'center';
+  for (let s2 = 0; s2 <= span; s2++) ctx.fillText(s2 + 's', hx0 + s2 / span * hw, hy0 + hh + 14);
+  if (state !== 'idle') {
+    ctx.strokeStyle = 'rgba(255,209,102,.5)';
+    ctx.strokeRect(hx0 + winOpen / span * hw, hy0, WIN_W / span * hw, hh);
+  }
+
+  // メーター
+  $('#mT').textContent = t.toFixed(2) + ' s';
+  $('#mF').textContent = Fhand.toFixed(0) + ' N';
+  $('#mFmax').textContent = Fmax.toFixed(0) + ' N';
+  $('#mV').textContent = (blocks.length ? bv(N - 1) : 0).toFixed(2) + ' m/s';
+  if (chart && forceData.length !== chart._lastLen) {
+    chart._lastLen = forceData.length;
+    chart.update('none');
+  }
+}
+
+// ---------------- Chart.js ----------------
+let chart = null;
+if (window.Chart) {
+  chart = new Chart(document.getElementById('forceChart'), {
+    type: 'line',
+    data: { datasets: [
+      { label: '手に返る反作用 [N]', data: forceData, borderColor: '#ffd166', borderWidth: 1.5, pointRadius: 0, parsing: false },
+      { label: '100 N', data: [{ x: 0, y: 100 }, { x: 8, y: 100 }], borderColor: '#ff5d73', borderDash: [5, 4], borderWidth: 1, pointRadius: 0, parsing: false }
+    ] },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { type: 'linear', min: 0, max: 8, ticks: { color: '#8d9aab' }, grid: { color: '#26303c' }, title: { display: true, text: 't [s]', color: '#8d9aab' } },
+        y: { min: 0, max: F_MAX, ticks: { color: '#8d9aab' }, grid: { color: '#26303c' } }
+      },
+      plugins: { legend: { labels: { color: '#c4ccd6', boxWidth: 12 } } }
+    }
+  });
+}
+
+// ---------------- 入力 ----------------
+const pushBtn = $('#pushBtn');
+const down = () => { if (state === 'running') holding = true; };
+const up = () => { holding = false; };
+pushBtn.addEventListener('pointerdown', e => { e.preventDefault(); down(); });
+window.addEventListener('pointerup', up);
+pushBtn.addEventListener('pointerleave', up);
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); if (state === 'idle' || state === 'done') { if (!e.repeat && !document.querySelector('.rv-modal-bg')) startRound(); } else down(); }
+});
+window.addEventListener('keyup', e => { if (e.code === 'Space') up(); });
+$('#startBtn').onclick = startRound;
+document.querySelectorAll('#levels button').forEach(b => b.onclick = () => setLevel(+b.dataset.k));
+
+// テスト・デバッグ用フック
+window.__c1 = {
+  get state() { return { state, t, hitT, hitV, winOpen, firstContactT, firstMovedT, lastMovedT, Fmax, kappa }; },
+  setLevel, startRound, press(v) { holding = v; }, setWindow(x) { winOpen = x; }
+};
+
+setLevel(1);
+RV.loop(step, render, DT);
+
+RV.modal('第1章 透過伝達性の喪失',
+  `<p>ある朝、世界から<b>剛体</b>が消えはじめた。剛体とは「2点間の距離が運動を通して一定である質点系」（教科書 3.1）。その距離が、もう保たれない。</p>
+   <p>剛体には、与えられた力を<b>瞬時に</b>全体へ伝えるという性質があった（溝口ら 原理4）。剛体が消えると、押した力は<b>波</b>になって、遅れて届く。</p>
+   <p><b>目的：</b>8個のブロックの列を手で押し、最後尾を<b>鐘が開いている時間窓</b>のあいだに当てる。κ が小さいほど力が届くのは遅い。そのぶん早めに押しはじめること。</p>
+   <p class="note">操作：「ラウンド開始」→ 時刻を見て「押す」を長押し（または Space）。</p>`,
+  [{ label: 'はじめる', primary: true }]);
+</script>
+</body>
+</html>
