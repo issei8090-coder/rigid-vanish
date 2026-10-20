@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剛体消失 — オープニング</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="shared/common.css">
+<style>
+  html, body { overflow: hidden; }
+  body {
+    background:
+      radial-gradient(ellipse at 50% 42%, #17222e 0%, #0d1218 55%, #080a0d 100%);
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .5;
+    background-image: radial-gradient(#223040 1px, transparent 1.2px);
+    background-size: 26px 26px;
+    mask-image: radial-gradient(ellipse at 50% 45%, #000 15%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 45%, #000 15%, transparent 70%);
+  }
+  /* 立体イラストの舞台。字幕・見出しと重ならないよう、空いている領域だけを使う */
+  #stage { position: fixed; left: 0; right: 0; top: 70px; height: 60vh; }
+  #zc { display: block; cursor: grab; touch-action: none; }
+  #capMeasure { position: fixed; left: -9999px; top: 0; visibility: hidden; pointer-events: none; }
+  #zc:active { cursor: grabbing; }
+
+  /* 表紙 */
+  #title {
+    position: fixed; left: 0; right: 0; top: 11vh; text-align: center; pointer-events: none;
+    transition: opacity .6s, transform .6s;
+  }
+  #title .kicker { font-family: var(--mono); letter-spacing: .5em; font-size: 12px; color: var(--muted); }
+  #title h1 { font-size: clamp(44px, 9vw, 88px); margin: 4px 0 0; letter-spacing: .14em; line-height: 1.1;
+    text-shadow: 0 6px 30px rgba(0,0,0,.6); }
+  #title h1 span { color: var(--accent); text-shadow: 0 0 40px rgba(255,122,69,.45); }
+  #title p { color: #b9c5d2; margin: 10px 0 0; font-size: clamp(14px, 2.2vw, 18px); }
+  #title .go {
+    pointer-events: auto; margin-top: 54vh; font-size: 16px; padding: 11px 30px; border-radius: 999px;
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  #title.hide { opacity: 0; transform: translateY(-14px); }
+  #title.hide .go { pointer-events: none; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(255,122,69,.0), 0 6px 26px rgba(255,122,69,.55); transform: scale(1.03); } }
+
+  /* 見出しチップ */
+  #heading {
+    position: fixed; left: 50%; top: 22px; transform: translateX(-50%);
+    font-weight: 700; font-size: clamp(16px, 2.6vw, 22px); letter-spacing: .06em;
+    padding: 6px 20px; border-radius: 999px; white-space: nowrap;
+    background: rgba(23,36,48,.8); border: 1px solid #2c4a5e; color: var(--rigid);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    transition: opacity .4s, transform .4s; pointer-events: none;
+  }
+  #heading.off { opacity: 0; transform: translate(-50%, -8px); }
+
+  /* 字幕 */
+  #cap {
+    position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%);
+    width: min(860px, calc(100vw - 32px)); padding: 16px 22px 18px;
+    background: linear-gradient(180deg, rgba(18,24,31,.86), rgba(14,19,25,.92));
+    border: 1px solid var(--line2); border-radius: 16px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.5);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: opacity .4s, transform .4s; cursor: pointer;
+  }
+  #cap.off { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
+  #capText { font-size: clamp(15px, 2.1vw, 20px); line-height: 1.85; min-height: 1.85em; }
+  #capText em { color: #ffa07a; font-style: normal; }
+  #capText b { color: #fff; }
+  #capText .k { color: var(--rigid); font-weight: 700; }
+  #capText .note { display: block; font-size: .8em; margin-top: 4px; }
+  #capText .caret { display: inline-block; width: .5em; height: 1.1em; vertical-align: -.15em; margin-left: 2px;
+    background: var(--accent); animation: blink .8s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  #cap .hint { position: absolute; right: 16px; bottom: 8px; font-size: 12px; color: var(--accent);
+    opacity: 0; transition: opacity .3s; }
+  #cap.done .hint { opacity: 1; animation: nudge 1.2s ease-in-out infinite; }
+  @keyframes nudge { 50% { transform: translateX(4px); } }
+
+  /* 3D 内のラベル */
+  .lbl {
+    position: fixed; transform: translate(-50%, -50%); pointer-events: none; white-space: nowrap;
+    font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+    background: rgba(13,17,22,.78); border: 1px solid var(--line2); transition: opacity .35s;
+  }
+  .lbl.rigid { color: var(--rigid); border-color: #2c4a5e; }
+  .lbl.soft { color: var(--accent); border-color: #5a3a2a; }
+
+  /* κ メーター */
+  #kmeter {
+    position: fixed; right: max(16px, 6vw); top: 50%; transform: translateY(-50%);
+    width: 190px; padding: 14px 16px; border-radius: 14px; text-align: center;
+    background: rgba(18,24,31,.85); border: 1px solid var(--line2);
+    transition: opacity .4s; pointer-events: none;
+  }
+  #kmeter .v { font-family: var(--mono); font-size: 38px; font-weight: 700; line-height: 1.1; }
+  #kmeter .bar { height: 10px; border-radius: 6px; background: #252e39; overflow: hidden; margin: 10px 0 6px; }
+  #kmeter .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--rigid)); }
+  #kmeter .s { font-weight: 700; }
+  #kmeter .ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  #kmeter.off { opacity: 0; }
+
+  /* 遊び方 */
+  #steps {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(860px, calc(100vw - 32px));
+    transition: opacity .4s;
+  }
+  #steps.off { opacity: 0; pointer-events: none; }
+  #steps .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .step {
+    background: linear-gradient(180deg, #1e2630, var(--panel)); border: 1px solid var(--line2);
+    border-radius: 16px; padding: 18px 18px 16px; box-shadow: 0 16px 40px rgba(0,0,0,.4);
+    opacity: 0; transform: translateY(16px); transition: opacity .5s, transform .5s;
+  }
+  .step.in { opacity: 1; transform: none; }
+  .step .n {
+    width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    font-family: var(--mono); font-weight: 700; color: #1a0d06; background: var(--accent); margin-bottom: 10px;
+    box-shadow: 0 4px 14px rgba(255,122,69,.4);
+  }
+  .step .ic { font-size: 30px; float: right; line-height: 1; opacity: .9; }
+  .step h4 { margin: 0 0 6px; font-size: 16px; }
+  .step p { margin: 0; font-size: 13.5px; color: #c9d3de; }
+  #steps .tail { text-align: center; margin-top: 20px; opacity: 0; transition: opacity .5s; }
+  #steps .tail.in { opacity: 1; }
+  #steps .tail p { color: var(--muted); margin: 0 0 12px; }
+  #steps .tail .btn { text-decoration: none; display: inline-block; font-size: 15px; padding: 10px 22px; margin: 4px; }
+
+  /* 下部ナビ */
+  #nav {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 60px;
+    display: flex; align-items: center; justify-content: center; gap: 14px; padding: 0 16px;
+    transition: opacity .4s;
+  }
+  #nav.off { opacity: 0; pointer-events: none; }
+  #dots { display: flex; gap: 7px; }
+  #dots button { width: 9px; height: 9px; padding: 0; border-radius: 50%; border: 0; cursor: pointer;
+    background: #2f3a48; transition: background .2s, width .2s; }
+  #dots button.on { background: var(--accent); width: 24px; border-radius: 6px; }
+  #nav .btn { padding: 5px 12px; font-size: 12.5px; }
+  #auto { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  #skip {
+    position: fixed; right: 16px; top: 18px; font-size: 12.5px; color: var(--muted); text-decoration: none;
+    padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(13,17,22,.6);
+  }
+  #skip:hover { color: var(--fg); border-color: var(--line2); }
+  #drag { position: fixed; left: 16px; top: 22px; font-size: 11.5px; color: #5d6b7c; pointer-events: none; }
+
+  @media (max-width: 720px) {
+    #steps .grid { grid-template-columns: 1fr; gap: 8px; }
+    #steps { top: 96px; transform: translateX(-50%); max-height: calc(100vh - 170px); overflow-y: auto; }
+    .step { padding: 12px 14px; }
+    #kmeter { top: 96px; right: 50%; transform: translateX(50%); width: min(320px, calc(100vw - 32px)); padding: 6px 12px;
+      display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 10px; text-align: left; }
+    #kmeter > div:first-child, #kmeter .ends { display: none; }
+    #kmeter .v { font-size: 20px; }
+    #kmeter .bar { margin: 0; }
+    #kmeter .s { margin: 0 !important; }
+    #cap { bottom: 64px; padding: 12px 14px 16px; }
+    #heading { top: 58px; }
+    #drag { display: none; }
+    #nav .lbl-auto { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="zc" aria-label="オープニングの立体イラスト"></canvas></div>
+
+<div id="title">
+  <div class="kicker">RIGID VANISH</div>
+  <h1>剛体<span>消失</span></h1>
+  <p>「かたい物」がこの世から消えたら、何が起こる？</p>
+  <button class="btn primary go" id="start">▶ はじめる</button>
+</div>
+
+<div id="heading" class="off"></div>
+<div id="labels"></div>
+
+<div id="kmeter" class="off">
+  <div style="font-size:12px;color:var(--muted)">かたさ</div>
+  <div class="v">κ <span id="kv">1.00</span></div>
+  <div class="bar"><i id="kb" style="width:100%"></i></div>
+  <div class="ends"><span>0 やわらかい</span><span>1 かたい</span></div>
+  <div class="s" id="ks" style="margin-top:6px;color:var(--rigid)">かたい</div>
+</div>
+
+<div id="steps" class="off">
+  <div class="grid">
+    <div class="step"><span class="ic">🖐</span><div class="n">1</div><h4>まず左の図で練習</h4><p>κ を下げて点を引っぱり、「かたさが消える」感覚をつかむ。</p></div>
+    <div class="step"><span class="ic">🗺</span><div class="n">2</div><h4>章を選ぶ</h4><p>どの章も「かたい世界（κ=1）」から始まり、レベルが上がるほどやわらかくなる。</p></div>
+    <div class="step"><span class="ic">★</span><div class="n">3</div><h4>ミッションに挑む</h4><p>画面右側の「やること」を読んで操作 → 結果画面で「なぜ？」を確認して★を集める。</p></div>
+  </div>
+  <div class="tail">
+    <p>迷ったら第1章「押した力が届かない」からどうぞ。</p>
+    <a class="btn primary" href="chapters/c1-propagation.html" data-done>第1章からはじめる</a>
+    <a class="btn" href="index.html" data-done>世界地図を見る</a>
+  </div>
+</div>
+
+<div id="cap" class="off"><div id="capText"></div><span class="hint">クリック / Space で次へ ▶</span></div>
+
+<div id="nav" class="off">
+  <button class="btn" id="prev" aria-label="前へ">◀</button>
+  <div id="dots"></div>
+  <button class="btn" id="next" aria-label="次へ">▶</button>
+  <label id="auto"><input type="checkbox" id="autoChk" checked> <span class="lbl-auto">自動で進む</span></label>
+</div>
+<a id="skip" href="index.html" data-done>スキップ →</a>
+<div id="drag">ドラッグで回せます</div>
+
+<script src="https://cdn.jsdelivr.net/npm/zdog@1.1.3/dist/zdog.dist.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script src="shared/common.js"></script>
+<script>
+(function () {
+  'use strict';
+  const TAU = Zdog.TAU;
+  const C = {
+    rigid: '#5cc8ff', rigidL: '#a8e2ff', accent: '#ff7a45', accentL: '#ffa07a', warn: '#ffd166',
+    paper: '#f4ecd9', paperD: '#e3d6ba', ink: '#b3a68b', cover: '#2b5277', coverD: '#1d3a57',
+    skin: '#f3d2b4', hair: '#3a2c26', coat: '#ff7a45', pants: '#2b3e55', floor: '#16202b',
+    stone: '#a3acb7', stoneL: '#c3cad2', stoneD: '#7f8893', jelly: '#ff9a6b', jellyL: '#ffbb98', jellyD: '#e3754a'
+  };
+
+  // ---------- 色ユーティリティ ----------
+  const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a, b, t) => {
+    const A = hex2rgb(a), B = hex2rgb(b);
+    return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  };
+  const withA = (h, a) => {
+    if (a >= 0.995) return h;
+    const [r, g, b] = hex2rgb(h);
+    return `rgba(${r},${g},${b},${Math.max(0, a).toFixed(3)})`;
+  };
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+
+  // ---------- Zdog 世界 ----------
+  const illo = new Zdog.Illustration({ element: '#zc', dragRotate: true, rotate: { x: -0.18 } });
+
+  // グループ（場面ごとの登場物）。透明度 _a と拡大率で出し入れする。
+  const groups = [];
+  function group(opts = {}) {
+    const g = new Zdog.Anchor(Object.assign({ scale: 0.01 }, opts));
+    g._a = 0; g._on = false;
+    groups.push(g);
+    return g;
+  }
+  function show(g, on, dur = 0.8) {
+    gsap.killTweensOf(g); gsap.killTweensOf(g.scale);
+    if (on) {
+      if (!g._on) { illo.addChild(g); g._on = true; }
+      gsap.to(g, { _a: 1, duration: dur * 0.7 });
+      gsap.to(g.scale, { x: 1, y: 1, z: 1, duration: dur, ease: 'back.out(1.6)' });
+    } else if (g._on) {
+      gsap.to(g, { _a: 0, duration: dur * 0.5 });
+      gsap.to(g.scale, {
+        x: 0.6, y: 0.6, z: 0.6, duration: dur * 0.5, ease: 'power2.in',
+        onComplete() { illo.removeChild(g); g._on = false; }
+      });
+    }
+  }
+  // 子孫すべての色に、グループの透明度と個別の透明度 _ca を掛ける
+  function paint(node, a) {
+    (node.children || []).forEach(s => {
+      if (s.color !== undefined && typeof s.color === 'string') {
+        if (s._c === undefined) s._c = s.color.startsWith('#') ? s.color : null;
+        if (s._c) s.color = withA(s._c, a * (s._ca === undefined ? 1 : s._ca));
+      }
+      paint(s, a);
+    });
+  }
+  const line = (addTo, pts, stroke, color, extra) =>
+    new Zdog.Shape(Object.assign({ addTo, path: pts, stroke, color, closed: false }, extra || {}));
+  const dot = (addTo, p, stroke, color, extra) =>
+    new Zdog.Shape(Object.assign({ addTo, translate: p, stroke, color }, extra || {}));
+  const floorDisk = (addTo, y, d) => new Zdog.Ellipse({
+    addTo, diameter: d, translate: { y }, rotate: { x: TAU / 4 }, stroke: 0, fill: true, color: C.floor
+  });
+
+  // ---------- 教科書 ----------
+  const book = group({ translate: { y: 10 } });
+  const bookTilt = new Zdog.Anchor({ addTo: book, rotate: { x: -0.35 } });
+  // Zdog は図形を奥行きで並べ替えるので、ページと表紙は Group にまとめて描く順番を固定する
+  line(bookTilt, [{ y: -104 }, { y: 104 }], 10, C.coverD);
+  new Zdog.Rect({ addTo: bookTilt, width: 158, height: 212, translate: { x: 80, z: -3 }, stroke: 6, fill: true, color: C.cover });
+  const rightPage = new Zdog.Group({ addTo: bookTilt, translate: { x: 80 } });
+  new Zdog.Rect({ addTo: rightPage, width: 150, height: 202, stroke: 3, fill: true, color: C.paper });
+  const hinge = new Zdog.Anchor({ addTo: bookTilt, rotate: { y: Math.PI } });
+  const leftCover = new Zdog.Group({ addTo: hinge, translate: { x: -80, z: -3 } });
+  new Zdog.Rect({ addTo: leftCover, width: 158, height: 212, stroke: 6, fill: true, color: C.cover });
+  const coverDeco = [
+    new Zdog.Rect({ addTo: leftCover, width: 100, height: 14, translate: { y: -40, z: -2 }, stroke: 2, fill: true, color: C.warn }),
+    new Zdog.Rect({ addTo: leftCover, width: 70, height: 6, translate: { y: -16, z: -2 }, stroke: 2, fill: true, color: C.rigidL })
+  ];
+  const leftPage = new Zdog.Group({ addTo: hinge, translate: { x: -80 } });
+  new Zdog.Rect({ addTo: leftPage, width: 150, height: 202, stroke: 3, fill: true, color: C.paper });
+  function pageLines(page, skip) {
+    const out = [];
+    for (let i = 0; i < 10; i++) {
+      const y = -78 + i * 17.5;
+      const w = i === 0 ? 70 : 92 + ((i * 37) % 26);
+      if (i === skip) continue;
+      out.push(line(page, [{ x: -w / 2, y, z: 1.5 }, { x: w / 2, y, z: 1.5 }], i === 0 ? 6 : 3.5, i === 0 ? C.coverD : C.ink));
+    }
+    return out;
+  }
+  const pageInk = pageLines(leftPage, -1).concat(pageLines(rightPage, 4));
+  const LINE_Y = -78 + 4 * 17.5;
+  const vanishLine = line(rightPage, [{ x: -56, y: LINE_Y, z: 2 }, { x: 56, y: LINE_Y, z: 2 }], 6, C.accent);
+  const motes = [];
+  for (let i = 0; i < 46; i++) {
+    const m = dot(rightPage, { x: -56 + (112 * i) / 45, y: LINE_Y, z: 2 }, 3 + (i % 3) * 1.5, i % 4 ? C.accent : C.warn);
+    m._ca = 0; m._home = { x: m.translate.x, y: LINE_Y, z: 2 };
+    m._v = { x: (Math.random() - 0.5) * 40, y: -30 - Math.random() * 70, z: 20 + Math.random() * 70 };
+    motes.push(m);
+  }
+  const bookState = { dissolve: -1 }; // 消え始めた時刻（-1 = まだ）
+
+  // ---------- 剛体（6つの点をすべて棒で結んだ立体） ----------
+  const tetra = group();
+  const tSpin = new Zdog.Anchor({ addTo: tetra });
+  const TN = [[0, -110, 0], [0, 110, 0], [105, 0, 0], [-105, 0, 0], [0, 0, 105], [0, 0, -105]].map(p => ({ x: p[0], y: p[1], z: p[2] }));
+  const tNodes = TN.map(p => dot(tSpin, { x: p.x, y: p.y, z: p.z }, 22, C.rigid));
+  const tHi = TN.map(p => dot(tSpin, { x: p.x - 3, y: p.y - 4, z: p.z + 6 }, 6, '#ffffff'));
+  const tRods = [];
+  for (let i = 0; i < TN.length; i++) for (let j = i + 1; j < TN.length; j++) {
+    const r = line(tSpin, [], 3.5, C.rigidL);
+    r._i = i; r._j = j;
+    const w = { x: Math.sin(i * 7 + j), y: Math.cos(i * 3 + j * 5), z: Math.sin(i + j * 2) };
+    const n = Math.hypot(w.x, w.y, w.z) || 1; r._w = { x: w.x / n, y: w.y / n, z: w.z / n };
+    r.path = Array.from({ length: 9 }, () => ({ x: 0, y: 0, z: 0 }));
+    tRods.push(r);
+  }
+  const K = { v: 1 }; // 世界のかたさ κ
+
+  function noise(i, t) { return Math.sin(t * 1.3 + i * 1.7) + 0.5 * Math.sin(t * 2.3 + i * 3.1); }
+  function updateTetra(t) {
+    const s = 1 - K.v;
+    const P = TN.map((p, i) => ({
+      x: p.x + s * 42 * noise(i, t), y: p.y + s * 42 * noise(i + 10, t * 1.1) + s * s * 40, z: p.z + s * 42 * noise(i + 20, t * 0.9)
+    }));
+    const col = mix(C.rigid, C.accent, ease(s * 1.4));
+    tNodes.forEach((n, i) => { n.translate.set(P[i]); n._c = col; });
+    tHi.forEach((n, i) => n.translate.set({ x: P[i].x - 3, y: P[i].y - 4, z: P[i].z + 6 }));
+    const rc = mix(C.rigidL, C.accentL, ease(s * 1.4));
+    tRods.forEach((r, k) => {
+      const a = P[r._i], b = P[r._j];
+      for (let q = 0; q < 9; q++) {
+        const u = q / 8, amp = s * 16 * Math.sin(Math.PI * u) * Math.sin(t * 3 + k);
+        r.path[q].x = a.x + (b.x - a.x) * u + r._w.x * amp;
+        r.path[q].y = a.y + (b.y - a.y) * u + r._w.y * amp;
+        r.path[q].z = a.z + (b.z - a.z) * u + r._w.z * amp;
+      }
+      r._c = rc; r.updatePath();
+    });
+  }
+
+  // ---------- くずれていく世界の4つの小さなイラスト ----------
+  // ① 押してもすぐ届かないブロック列
+  const gBlocks = group({ translate: { x: -265, y: -120 } });
+  line(gBlocks, [{ x: -70, y: 16 }, { x: 70, y: 16 }], 3, '#3a4a5c');
+  const arrow = new Zdog.Anchor({ addTo: gBlocks });
+  line(arrow, [{ x: -96, y: 0 }, { x: -72, y: 0 }], 6, C.warn);
+  line(arrow, [{ x: -79, y: -7 }, { x: -71, y: 0 }, { x: -79, y: 7 }], 5, C.warn);
+  const blocks = [0, 1, 2, 3].map(i => new Zdog.Box({
+    addTo: gBlocks, width: 24, height: 24, depth: 24, translate: { x: -45 + i * 30 }, stroke: 2, fill: true,
+    color: C.rigid, topFace: C.rigidL, leftFace: '#3a9fd6', rightFace: '#3a9fd6', bottomFace: '#2a7fb0', rearFace: '#2a7fb0'
+  }));
+  // ② うまく転がれないボール
+  const gBall = group({ translate: { x: 265, y: -120 } });
+  line(gBall, [{ x: -80, y: -34 }, { x: 80, y: 38 }], 4, '#3a4a5c');
+  const ballA = new Zdog.Anchor({ addTo: gBall });
+  const ball = new Zdog.Ellipse({ addTo: ballA, diameter: 46, stroke: 3, fill: true, color: C.jelly });
+  const ballStripe = line(ballA, [{ x: -20 }, { x: 20 }], 4, C.jellyD);
+  dot(ballA, { x: -9, y: -10, z: 2 }, 7, '#ffe1cf');
+  // ③ 回しすぎて裂けるこま
+  const gTop = group({ translate: { x: -265, y: 110 } });
+  floorDisk(gTop, 46, 120);
+  const topTilt = new Zdog.Anchor({ addTo: gTop });
+  const topSpin = new Zdog.Anchor({ addTo: topTilt });
+  line(topSpin, [{ y: -42 }, { y: 42 }], 6, '#c08a5a');
+  new Zdog.Ellipse({ addTo: topSpin, diameter: 78, rotate: { x: TAU / 4 }, stroke: 5, fill: true, color: C.warn });
+  new Zdog.Ellipse({ addTo: topSpin, diameter: 46, rotate: { x: TAU / 4 }, translate: { y: -3 }, stroke: 3, color: C.accent });
+  const frags = [0, 1, 2, 3, 4, 5].map(i => dot(topSpin, { x: 0, y: 0, z: 0 }, 9, i % 2 ? C.warn : C.accent));
+  // ④ 糸が伸びてしまう振り子
+  const gPend = group({ translate: { x: 265, y: 100 } });
+  line(gPend, [{ x: -34, y: -70 }, { x: 34, y: -70 }], 7, '#6b7a8c');
+  const pRod = line(gPend, Array.from({ length: 10 }, () => ({ x: 0, y: 0 })), 2.5, '#c9d3de');
+  const pBob = dot(gPend, { y: 40 }, 34, C.rigid);
+  const pHi = dot(gPend, { y: 34 }, 8, '#ffffff');
+  const items = [gBlocks, gBall, gTop, gPend];
+
+  function updateItems(t) {
+    const s = 1 - K.v;
+    // ①：押した波が一つずつ遅れて伝わる
+    arrow.translate.x = 4 * Math.max(0, Math.sin(t * 3));
+    blocks.forEach((b, i) => {
+      const w = Math.max(0, Math.sin(t * 3 - i * (0.15 + 1.4 * s)));
+      b.translate.x = -45 + i * 30 + w * (4 + 6 * s);
+      b.scale.x = 1 - 0.3 * s * w;
+    });
+    // ②：坂を転がるボール（やわらかいとつぶれる）
+    const u = (t * 0.22) % 1, bx = -70 + 140 * u, by = -34 + 72 * (bx + 80) / 160 - 25;
+    ballA.translate.set({ x: bx, y: by + 4 * s });
+    ball.scale.set({ x: 1 + 0.25 * s, y: 1 - 0.3 * s, z: 1 });
+    ballStripe.rotate.z = t * (5 - 4 * s);
+    gBall._ra = u > 0.9 ? 1 - (u - 0.9) * 10 : u < 0.08 ? u / 0.08 : 1;
+    // ③：首ふりするこまと、ちぎれて飛ぶ破片
+    topSpin.rotate.y = t * 9;
+    topTilt.rotate.z = 0.18 + 0.25 * s * Math.sin(t * 1.6);
+    topTilt.rotate.x = 0.18 * Math.cos(t * 1.6);
+    const cyc = (t * 0.7) % 1;
+    frags.forEach((f, i) => {
+      const a = (i / 6) * TAU, r = 30 + cyc * 110 * s;
+      f.translate.set({ x: Math.cos(a) * r, y: -2 + cyc * 30 * s, z: Math.sin(a) * r });
+      f._ca = s > 0.15 ? 1 - cyc : 0;
+    });
+    // ④：伸び縮みする振り子
+    const th = 0.55 * Math.sin(t * 2.1), L = 105 * (1 + 0.18 * s * Math.sin(t * 4.2));
+    const ex = Math.sin(th) * L, ey = -70 + Math.cos(th) * L;
+    pRod.path.forEach((p, q) => {
+      const u2 = q / 9, wob = s * 9 * Math.sin(Math.PI * u2) * Math.sin(t * 8 + q);
+      p.x = ex * u2 + Math.cos(th) * wob; p.y = -70 + (ey + 70) * u2 - Math.sin(th) * wob;
+    });
+    pRod.updatePath();
+    pBob.translate.set({ x: ex, y: ey }); pHi.translate.set({ x: ex - 5, y: ey - 6, z: 8 });
+    pBob._c = mix(C.rigid, C.accent, s);
+  }
+
+  // ---------- 観測者 ----------
+  const gObs = group({ translate: { y: 92, z: 120 } });
+  floorDisk(gObs, 62, 110);
+  const obs = new Zdog.Anchor({ addTo: gObs });
+  line(obs, [{ x: -8, y: 30 }, { x: -9, y: 58 }], 11, C.pants);
+  line(obs, [{ x: 8, y: 30 }, { x: 10, y: 58 }], 11, C.pants);
+  line(obs, [{ y: 0 }, { y: 26 }], 36, C.coat);
+  line(obs, [{ x: -20, y: 4 }, { x: -26, y: 26 }], 10, C.coat);
+  const arm = line(obs, [{ x: 20, y: 4 }, { x: 34, y: 14 }], 10, C.coat);
+  dot(obs, { y: -12, z: 0 }, 14, C.skin);
+  const head = new Zdog.Anchor({ addTo: obs, translate: { y: -34 } });
+  dot(head, { y: -4, z: -3 }, 40, C.hair);
+  dot(head, { z: 2 }, 34, C.skin);
+  dot(head, { x: -7, y: 1, z: 18 }, 4.5, '#2a2320');
+  dot(head, { x: 7, y: 1, z: 18 }, 4.5, '#2a2320');
+  dot(head, { x: -12, y: 7, z: 15 }, 5, '#f4a99a');
+  dot(head, { x: 12, y: 7, z: 15 }, 5, '#f4a99a');
+  const lantern = new Zdog.Anchor({ addTo: obs, translate: { x: 36, y: 16 } });
+  line(lantern, [{ y: 0 }, { y: 12 }], 2, '#9aa6b4');
+  dot(lantern, { y: 22 }, 30, C.warn)._ca = 0.25;
+  dot(lantern, { y: 22 }, 14, '#fff3c4');
+
+  // ---------- 石とゼリー ----------
+  const gPush = group({ translate: { x: 10 } });
+  function lane(y, mat) {
+    const a = new Zdog.Anchor({ addTo: gPush, translate: { y } });
+    new Zdog.Rect({ addTo: a, width: 470, height: 90, translate: { y: 46 }, rotate: { x: TAU / 4 }, stroke: 0, fill: true, color: C.floor });
+    const piston = new Zdog.Anchor({ addTo: a });
+    line(piston, [{ x: -150 }, { x: 0 }], 14, '#6b7a8c');
+    new Zdog.Box({ addTo: piston, width: 10, height: 54, depth: 54, translate: { x: 2 }, stroke: 2, fill: true,
+      color: '#8d9aab', leftFace: '#6b7a8c', rightFace: '#6b7a8c', topFace: '#b3bfcc' });
+    const body = new Zdog.Box(Object.assign({ addTo: a, width: 80, height: 80, depth: 80, stroke: 8, fill: true }, mat));
+    const tag = new Zdog.Anchor({ addTo: a, translate: { x: 0, y: -78 } });
+    return { piston, body, tag };
+  }
+  const stoneL = lane(-82, { color: C.stone, topFace: C.stoneL, leftFace: C.stoneD, rightFace: C.stoneD, bottomFace: C.stoneD, rearFace: C.stoneD });
+  const jellyL = lane(92, { color: C.jelly, topFace: C.jellyL, leftFace: C.jellyD, rightFace: C.jellyD, bottomFace: C.jellyD, rearFace: C.jellyD });
+  const jellyShine = dot(jellyL.body, { x: -18, y: -20, z: 41 }, 9, '#ffe1cf');
+
+  function updatePush(t) {
+    const P = 4.2, c = t % P;
+    const go = ease(c / 1.6), back = ease((c - 2.7) / 1.2);
+    const tip = -175 + 140 * go - 140 * back;          // 押し棒の先端の位置
+    const d = Math.max(0, tip + 40);                      // 箱の左面（x=-40）にめり込んだ量
+    [stoneL, jellyL].forEach(L => L.piston.translate.x = tip);
+    // 石：押された分だけ、まるごと一緒に動く（形は変わらない）
+    stoneL.body.translate.x = d;
+    // ゼリー：押された側からつぶれ、遅れてぶるぶる揺れる
+    const pushing = c < 1.6 && d > 0;
+    const after = c - 1.6;
+    let sx = 1;
+    if (pushing) sx = 1 - 0.32 * ease(d / 50);
+    else if (c >= 1.6 && c < 2.7) sx = 1 - 0.32 * Math.exp(-3.2 * after) * Math.cos(10 * after);
+    jellyL.body.scale.set({ x: sx, y: 1 / Math.sqrt(sx), z: 1 / Math.sqrt(sx) });
+    jellyL.body.translate.x = d * 0.55 + (pushing ? 40 * (1 - sx) : 0);
+    jellyL.body.translate.y = 40 * (1 - 1 / Math.sqrt(sx));
+  }
+
+  // ---------- κ の格子（3×3×3 の点とばね） ----------
+  const gLat = group({ translate: { x: -70 } });
+  floorDisk(gLat, 96, 300);
+  const LN = [];
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) LN.push({ x: i * 62, y: j * 62, z: k * 62 });
+  const lNodes = LN.map(p => dot(gLat, Object.assign({}, p), 15, C.rigid));
+  const lRods = [];
+  LN.forEach((a, i) => LN.forEach((b, j) => {
+    if (j <= i) return;
+    if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z) !== 62) return;
+    const r = line(gLat, [{}, {}, {}, {}, {}], 3, C.rigidL); r._i = i; r._j = j; lRods.push(r);
+  }));
+  function updateLattice(t) {
+    const s = 1 - K.v;
+    const P = LN.map((p, i) => {
+      const h = (62 - p.y) / 124;                 // 0 = 床, 1 = てっぺん
+      const spread = 1 + 0.85 * s * s * (1 - h * 0.6);
+      return {
+        x: p.x * spread + s * 8 * noise(i, t),
+        y: 62 - (62 - p.y) * (1 - 0.82 * s * s) + s * 6 * noise(i + 9, t * 1.2),
+        z: p.z * spread + s * 8 * noise(i + 18, t)
+      };
+    });
+    const col = mix(C.rigid, C.accent, ease(s * 1.3)), rc = mix(C.rigidL, C.accentL, ease(s * 1.3));
+    lNodes.forEach((n, i) => { n.translate.set(P[i]); n._c = col; });
+    lRods.forEach((r, k) => {
+      const a = P[r._i], b = P[r._j];
+      r.path.forEach((p, q) => {
+        const u = q / 4, w = s * 7 * Math.sin(Math.PI * u) * Math.sin(t * 4 + k);
+        p.x = a.x + (b.x - a.x) * u + w; p.y = a.y + (b.y - a.y) * u + w * 0.5; p.z = a.z + (b.z - a.z) * u;
+      });
+      r._c = rc; r.updatePath();
+    });
+    gLat.rotate.y = t * 0.35;
+  }
+
+  // ---------- 字幕（タイプライター） ----------
+  const $ = id => document.getElementById(id);
+  const cap = $('cap'), capText = $('capText');
+  let typing = null;
+  function typeSegs(segs, onDone) {
+    stopTyping();
+    capText.innerHTML = '';
+    cap.classList.remove('done');
+    const caret = document.createElement('span'); caret.className = 'caret';
+    let si = 0, ci = 0, cur = null, wait = 0;
+    const state = { timer: null, finish };
+    function nextSeg() {
+      const sg = segs[si];
+      if (sg.br) { capText.insertBefore(document.createElement('br'), caret); si++; return; }
+      const tag = sg.em ? 'em' : sg.b ? 'b' : sg.k ? 'span' : sg.note ? 'span' : 'span';
+      cur = document.createElement(tag);
+      if (sg.k) cur.className = 'k';
+      if (sg.note) cur.className = 'note';
+      cur._text = sg.em || sg.b || sg.k || sg.note || sg.t;
+      capText.insertBefore(cur, caret);
+      ci = 0;
+      if (sg.at) sg.at();
+      wait = sg.pause || 0;
+    }
+    function tick() {
+      if (wait > 0) { wait -= 30; return; }
+      if (!cur || ci >= cur._text.length) {
+        if (cur) { si++; cur = null; }
+        if (si >= segs.length) return finish(false);
+        nextSeg();
+        return;
+      }
+      cur.textContent += cur._text[ci++];
+    }
+    function finish(instant) {
+      if (instant) {
+        // 残りを一気に表示し、まだ呼ばれていない演出も実行する
+        if (cur) { cur.textContent = cur._text; si++; cur = null; }
+        while (si < segs.length) { nextSeg(); if (cur) { cur.textContent = cur._text; si++; cur = null; } }
+      }
+      clearInterval(state.timer); typing = null;
+      caret.remove();
+      cap.classList.add('done');
+      onDone && onDone();
+    }
+    capText.appendChild(caret);
+    state.timer = setInterval(tick, 34);
+    typing = state;
+  }
+  function stopTyping() { if (typing) { clearInterval(typing.timer); typing = null; } }
+
+  // ---------- ラベル（3D の位置に HTML を重ねる） ----------
+  const labels = [];
+  function label(anchor, text, cls) {
+    const el = document.createElement('div');
+    el.className = 'lbl ' + cls; el.textContent = text; el.style.opacity = 0;
+    $('labels').appendChild(el);
+    labels.push({ anchor, el, on: false });
+    return labels[labels.length - 1];
+  }
+  const lbStone = label(stoneL.tag, 'かたい物（剛体）：まるごと動く', 'rigid');
+  const lbJelly = label(jellyL.tag, 'やわらかい物：つぶれてから動く', 'soft');
+  function placeLabels() {
+    labels.forEach(L => {
+      if (!L.on) { L.el.style.opacity = 0; return; }
+      const o = L.anchor.renderOrigin;
+      const r = stage.getBoundingClientRect();
+      L.el.style.left = (r.left + r.width / 2 + o.x * illo.zoom) + 'px';
+      L.el.style.top = (r.top + r.height / 2 + o.y * illo.zoom) + 'px';
+      L.el.style.opacity = 1;
+    });
+  }
+
+  // ---------- 場面 ----------
+  const view = (x, y, dur = 1.4) => gsap.to(illo.rotate, { x, y, z: 0, duration: dur, ease: 'power2.inOut' });
+  const SCENES = [
+    { // 0 表紙
+      show: [book], heading: '', cap: false,
+      enter() {
+        gsap.to(hinge.rotate, { y: Math.PI, duration: 0.8 });
+        gsap.to(book.translate, { x: 0, y: 70, duration: 1 }); book._spin = true;
+        view(-0.18, 0);
+      }
+    },
+    { // 1 ある朝
+      show: [book],
+      enter() {
+        book._spin = false;
+        gsap.to(book.translate, { x: 0, y: -10, duration: 1.2, ease: 'power2.inOut' });
+        gsap.to(book.rotate, { y: 0, duration: 1.2, ease: 'power2.inOut' });
+        gsap.fromTo(hinge.rotate, { y: Math.PI }, { y: 0.12, duration: 1.8, delay: 0.3, ease: 'power3.inOut' });
+        bookState.dissolve = -1; vanishLine._ca = 1; motes.forEach(m => { m._ca = 0; m.translate.set(m._home); });
+        view(-0.22, 0);
+      },
+      segs: () => [{ t: 'ある朝、物理学の教科書から', pause: 1500 }, { em: '一行' }, { t: 'が消えた。' }],
+      done() { if (bookState.dissolve < 0) { bookState.dissolve = clock; RV.sfx.thud(0.6); } },
+      hold: 4.5
+    },
+    { // 2 剛体の定義
+      show: [tetra],
+      enter() { K.v = 1; gsap.killTweensOf(K); tetra.translate.set({ x: 0, y: -20 }); view(-0.2, 0); },
+      segs: () => [
+        { em: '「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」' },
+        { t: '──剛体の定義である。' }, { br: true },
+        { note: '（ふつうの言葉にすると「どの2点の間の長さも、ずっと変わらない物」）', pause: 400 }
+      ],
+      hold: 5
+    },
+    { // 3 それ以来
+      show: [tetra],
+      enter() {
+        K.v = 1; gsap.killTweensOf(K);
+        gsap.to(tetra.translate, { x: 0, y: -20, duration: 1 });
+        gsap.to(tetra.scale, { x: 0.72, y: 0.72, z: 0.72, duration: 1.2, delay: 0.2 });
+        items.forEach(g => show(g, false));
+        view(-0.15, 0);
+      },
+      segs: () => [
+        { t: 'それ以来、', at() { gsap.to(K, { v: 0.22, duration: 7, ease: 'sine.inOut' }); RV.sfx.tone(196, '8n'); } },
+        { t: '押した力は一瞬では伝わらなくなり、', at() { show(gBlocks, true); RV.sfx.tone(330); } },
+        { t: 'ボールはうまく転がらず、', at() { show(gBall, true); RV.sfx.tone(294); } },
+        { t: 'こまは回しすぎると裂け、', at() { show(gTop, true); RV.sfx.tone(262); } },
+        { t: '振り子では重力の強さも測れなくなった。', at() { show(gPend, true); RV.sfx.tone(220); } }
+      ],
+      hold: 4.5
+    },
+    { // 4 最後の観測者
+      show: [tetra, gBlocks, gBall, gTop, gPend, gObs],
+      enter() {
+        gsap.killTweensOf(K); gsap.to(K, { v: 0.22, duration: 1 });
+        gsap.to(tetra.translate, { x: 0, y: -60, duration: 1.2 });
+        gsap.to(tetra.scale, { x: 0.62, y: 0.62, z: 0.62, duration: 1.2 });
+        view(-0.28, 0);
+      },
+      segs: () => [{ t: 'あなたは', pause: 300 }, { em: '最後の観測者' }, { t: 'として、くずれていく世界を確かめにいく。' }],
+      hold: 4.5
+    },
+    { // 5 剛体ってなに？ ひとことで
+      show: [gPush], heading: '剛体（ごうたい）ってなに？', labels: [lbStone, lbJelly],
+      enter() { view(-0.28, -0.35); },
+      segs: () => [
+        { b: 'ひとことで　' }, { t: 'どれだけ押しても引いても、' }, { b: '形が少しも変わらない物' },
+        { t: 'のこと。物理の教科書は、石やボールをこの「理想のかたい物」として考えます。' }
+      ],
+      hold: 5
+    },
+    { // 6 本当は？
+      show: [gPush], heading: '剛体（ごうたい）ってなに？', labels: [lbStone, lbJelly],
+      enter() { view(-0.3, 0.3); },
+      segs: () => [
+        { b: '本当は？　' }, { t: '現実の物はほんの少しだけ縮んだり曲がったりします。このゲームでは、その「少し」を大きくしていったら世界がどう変わるかを体験します。' }
+      ],
+      hold: 5.5
+    },
+    { // 7 κ
+      show: [gLat], heading: 'κ（カッパ）', kmeter: true,
+      enter() {
+        gLat._ra = 1;
+        gsap.killTweensOf(K); K.v = 1;
+        gsap.to(K, { v: 0.04, duration: 3.2, delay: 0.8, ease: 'sine.inOut', yoyo: true, repeat: -1, repeatDelay: 0.9 });
+        gLat.translate.x = innerWidth < 720 ? 0 : -70;
+        view(-0.32, 0);
+      },
+      segs: () => [
+        { t: 'このゲームでの「かたさ」の目盛り。' }, { k: '1 = 完全にかたい' }, { t: '、0 に近いほどやわらかい。' }
+      ],
+      hold: 7
+    },
+    { // 8 遊び方
+      show: [], heading: '遊び方（3ステップ）', cap: false, steps: true,
+      enter() {
+        gsap.killTweensOf(K); gsap.to(K, { v: 0.55, duration: 1.5 }); gLat._ra = 0.28;
+        gsap.to(gLat.translate, { x: 0, duration: 1 });
+        try { localStorage.setItem('rv-intro-seen', '1'); } catch (e) { }
+        view(-0.32, 0);
+      }
+    }
+  ];
+
+  // ---------- レイアウト：いちばん長い字幕の高さを測って、その上だけを舞台にする ----------
+  const stage = $('stage');
+  function segsText(segs) {
+    return segs.map(g => g.br ? '<br>' : g.em ? `<em>${g.em}</em>` : g.b ? `<b>${g.b}</b>`
+      : g.k ? `<span class="k">${g.k}</span>` : g.note ? `<span class="note">${g.note}</span>` : g.t).join('');
+  }
+  function layout() {
+    const m = document.createElement('div');
+    m.id = 'capMeasure'; m.style.width = cap.getBoundingClientRect().width + 'px';
+    m.style.padding = getComputedStyle(cap).padding;
+    const tx = document.createElement('div'); tx.id = 'capText'; tx.style.cssText = 'min-height:0';
+    m.appendChild(tx); document.body.appendChild(m);
+    let maxH = 0;
+    SCENES.forEach(sc => { if (sc.segs) { tx.innerHTML = segsText(sc.segs()); maxH = Math.max(maxH, m.offsetHeight); } });
+    m.remove();
+    const mobile = innerWidth < 720;
+    const top = mobile ? 150 : 70;
+    const bottom = parseFloat(getComputedStyle(cap).bottom) + maxH + 12;
+    const h = Math.max(160, innerHeight - top - bottom);
+    stage.style.top = top + 'px'; stage.style.height = h + 'px';
+    illo.setSize(innerWidth, h);
+    illo.zoom = Math.min(innerWidth / 720, h / 380);
+  }
+  addEventListener('resize', layout);
+  layout();
+
+  // ---------- 進行 ----------
+  let cur = -1, clock = 0, autoTimer = null;
+  const dotsEl = $('dots');
+  SCENES.forEach((_, i) => {
+    if (i === 0) return;
+    const b = document.createElement('button');
+    b.setAttribute('aria-label', `場面 ${i}`);
+    b.onclick = () => go(i);
+    dotsEl.appendChild(b);
+  });
+  function go(n) {
+    n = clamp(n, 0, SCENES.length - 1);
+    clearTimeout(autoTimer);
+    const sc = SCENES[n];
+    cur = n;
+    groups.forEach(g => show(g, sc.show.includes(g)));
+    if (n !== 3 && n !== 4) { gsap.to(tetra.scale, { x: 1, y: 1, z: 1, duration: 0.8 }); }
+    sc.enter && sc.enter();
+    $('title').classList.toggle('hide', n !== 0);
+    $('nav').classList.toggle('off', n === 0);
+    $('skip').style.display = n === 8 ? 'none' : '';
+    const h = $('heading');
+    if (sc.heading) { h.textContent = sc.heading; h.classList.remove('off'); } else h.classList.add('off');
+    $('kmeter').classList.toggle('off', !sc.kmeter);
+    labels.forEach(L => L.on = (sc.labels || []).includes(L));
+    [...dotsEl.children].forEach((b, i) => b.classList.toggle('on', i + 1 === n));
+    $('prev').disabled = n <= 1; $('next').disabled = n >= SCENES.length - 1;
+    // 遊び方カード
+    const st = $('steps');
+    st.classList.toggle('off', !sc.steps);
+    st.querySelectorAll('.step, .tail').forEach(el => el.classList.remove('in'));
+    if (sc.steps) st.querySelectorAll('.step, .tail').forEach((el, i) => setTimeout(() => cur === n && el.classList.add('in'), 300 + i * 450));
+    // 字幕
+    if (sc.cap === false || !sc.segs) { stopTyping(); cap.classList.add('off'); }
+    else {
+      cap.classList.remove('off');
+      if (n > 0) RV.sfx.bell();
+      typeSegs(sc.segs(), () => {
+        sc.done && sc.done();
+        if ($('autoChk').checked && n < SCENES.length - 1) autoTimer = setTimeout(() => cur === n && go(n + 1), (sc.hold || 4) * 1000);
+      });
+    }
+  }
+  function next() {
+    if (cur === 0) return go(1);
+    if (typing) return typing.finish(true);   // 文字送り中なら、まず全文を出す
+    if (cur < SCENES.length - 1) go(cur + 1);
+  }
+  $('start').onclick = () => { RV.sfx.unlock(); go(1); };
+  $('next').onclick = next;
+  $('prev').onclick = () => go(cur - 1);
+  cap.onclick = next;
+  $('autoChk').onchange = e => {
+    if (!e.target.checked) clearTimeout(autoTimer);
+    else if (!typing && cur > 0 && cur < SCENES.length - 1) autoTimer = setTimeout(() => go(cur + 1), 2500);
+  };
+  document.querySelectorAll('[data-done]').forEach(a => a.addEventListener('click', () => {
+    try { localStorage.setItem('rv-intro-seen', '1'); } catch (e) { }
+  }));
+  addEventListener('keydown', e => {
+    if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); next(); }
+    else if (e.key === 'ArrowLeft') go(cur - 1);
+    else if (e.key === 'Escape') { try { localStorage.setItem('rv-intro-seen', '1'); } catch (er) { } location.href = 'index.html'; }
+  });
+
+  // ---------- 描画ループ ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now; clock += dt;
+    const t = clock;
+    if (book._on) {
+      const open = Math.cos(hinge.rotate.y) > 0;
+      pageInk.forEach(l => l._ca = open ? 1 : 0);
+      // 開いている間は左ページ、閉じている間は表紙だけを見せる（重なり順の乱れを防ぐ）
+      leftCover.children.forEach(d => d._ca = open ? 0 : 1);
+      leftPage.children.forEach(d => d._ca = open ? 1 : 0);
+      if (bookState.dissolve < 0) vanishLine._ca = open ? 1 : 0;
+      if (book._spin) book.rotate.y += dt * 0.5;
+      else book.rotate.y = 0.22 * Math.sin(t * 0.5);
+      if (bookState.dissolve >= 0) {
+        const e = t - bookState.dissolve;
+        vanishLine._ca = Math.max(0, 1 - e * 3);
+        motes.forEach((m, i) => {
+          const k = Math.max(0, e - (i / 46) * 0.5);
+          m._ca = k <= 0 ? 0 : Math.max(0, 1 - k / 2.4);
+          m.translate.set({ x: m._home.x + m._v.x * k, y: m._home.y + m._v.y * k + 6 * Math.sin(k * 4 + i), z: m._home.z + m._v.z * k });
+        });
+      }
+    }
+    if (tetra._on) { updateTetra(t); tSpin.rotate.y = t * 0.45; tSpin.rotate.x = 0.3 * Math.sin(t * 0.3); }
+    if (items.some(g => g._on)) updateItems(t);
+    if (gObs._on) { obs.rotate.y = 0.4 * Math.sin(t * 0.6); head.rotate.z = 0.08 * Math.sin(t * 1.3); arm.path[1].y = 14 + 2 * Math.sin(t * 2); arm.updatePath(); lantern.translate.y = 16 + 2 * Math.sin(t * 2); }
+    if (gPush._on) updatePush(t);
+    if (gLat._on) updateLattice(t);
+    groups.forEach(g => { if (g._on) paint(g, g._a * (g._ra === undefined ? 1 : g._ra)); });
+    illo.updateRenderGraph();
+    placeLabels();
+    if (cur === 7) {
+      $('kv').textContent = K.v.toFixed(2);
+      $('kb').style.width = (K.v * 100) + '%';
+      const ks = $('ks');
+      ks.textContent = K.v > 0.8 ? 'かたい' : K.v > 0.4 ? 'ゴムっぽい' : K.v > 0.15 ? 'ぐにゃぐにゃ' : 'とけた';
+      ks.style.color = mix(C.accent, C.rigid, K.v);
+    }
+    requestAnimationFrame(frame);
+  }
+  go(0);
+  requestAnimationFrame(frame);
+
+  // テスト用
+  window.__intro = { go, get scene() { return cur; }, K };
+})();
+</script>
+</body>
+</html>

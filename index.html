@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>剛体消失</title>
+<script>
+  // はじめての人はオープニングから（?hub を付けると直接ハブへ）
+  try { if (!localStorage.getItem('rv-intro-seen') && !/[?&]hub\b/.test(location.search)) location.replace('intro.html'); } catch (e) { }
+</script>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="shared/common.css">
 <style>
@@ -96,6 +100,7 @@
   </div>
 
   <aside class="hub-right">
+    <a class="btn" href="intro.html" style="display:inline-block;text-decoration:none;margin-bottom:14px">▶ オープニングをもう一度見る</a>
     <div class="story">
       <p>ある朝、物理学の教科書から一行が消えた。</p>
       <blockquote><em>「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」</em>──剛体の定義である。<br><span class="note">（ふつうの言葉にすると「どの2点の間の長さも、ずっと変わらない物」）</span></blockquote>
@@ -165,7 +170,7 @@
   document.getElementById('total').textContent = `★ ${total} / ${CHAPTERS.length * 3}`;
   document.getElementById('prog').style.width = (total / (CHAPTERS.length * 3) * 100) + '%';
   document.getElementById('libs-all').textContent =
-    'Matter.js 0.19 / Planck.js 1.0 / p2.js 0.7.1 / Rapier2D 0.14 (WASM) / cannon-es 0.20 / Ammo.js (Bullet, WASM) / Oimo.js 1.0.9 / LiquidFun (WASM) / toxiclibs.js 0.3.3 / three.js 0.160 / d3 7.9 / Chart.js 4.4 / Tone.js 14.7 / odex 3.0 / gpu.js 2.16';
+    'Matter.js 0.19 / Planck.js 1.0 / p2.js 0.7.1 / Rapier2D 0.14 (WASM) / cannon-es 0.20 / Ammo.js (Bullet, WASM) / Oimo.js 1.0.9 / LiquidFun (WASM) / toxiclibs.js 0.3.3 / three.js 0.160 / d3 7.9 / Chart.js 4.4 / Tone.js 14.7 / odex 3.0 / gpu.js 2.16 / Zdog 1.1.3 / GSAP 3.12';
 
   // ---------- d3-force による「剛体の定義」 ----------
   // 教科書 図3-4: △PQR を決めれば 4 番目以降の点は一意に決まり、自由度は増えない。
