@@ -357,7 +357,7 @@ function finish(win) {
     RV.modal('最後の剛体を届けた', `<p>残り κ = <b>${kappa.toFixed(2)}</b>　評価 <span class="stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span></p>
       <p>最後の剛体は、溶けきる前にゴールへたどり着いた。</p>
       <p><b>なぜ運べた？</b> かたいうちは、どこを押しても全体がいっしょに動くから。氷はお盆を傾ければ丸ごと滑るが、水になるとこぼれて広がる。</p>`,
-      [{ label: 'もう一度', onClick: reset }, { label: '世界地図へ', primary: true, onClick: () => location.href = '../index.html' }]);
+      [{ label: 'もう一度', onClick: reset }, { label: '世界地図へ', primary: true, onClick: () => location.href = '../index.html?hub' }]);
   } else {
     RV.sfx.fail();
     log.add('κ=0：世界からかたい物が消えた', [], { t: simT, force: true });

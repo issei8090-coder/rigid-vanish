@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>剛体消失</title>
 <script>
-  // はじめての人はオープニングから（?hub を付けると直接ハブへ）
-  try { if (!localStorage.getItem('rv-intro-seen') && !/[?&]hub\b/.test(location.search)) location.replace('intro.html'); } catch (e) { }
+  // トップを開いたら毎回オープニングから（ゲーム内からの「世界地図」リンクは ?hub 付きで直接ハブへ）
+  if (!/[?&]hub(=|&|$)/.test(location.search)) location.replace('intro.html');
 </script>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="shared/common.css">

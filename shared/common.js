@@ -31,7 +31,7 @@
     const h = document.createElement('header');
     h.className = 'rv-header';
     h.innerHTML =
-      `<a class="back" href="${opt.home || '../index.html'}">← 世界地図</a>` +
+      `<a class="back" href="${opt.home || '../index.html?hub'}">← 世界地図</a>` +
       `<span class="chap">${opt.chap || ''}</span><h1>${opt.title}</h1>` +
       `<span class="stars" id="rv-stars"></span>` +
       `<div class="libs">${(opt.libs || []).map(l => `<span class="lib-badge" data-lib="${l}">${l}</span>`).join('')}</div>`;
