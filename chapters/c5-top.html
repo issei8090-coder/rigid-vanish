@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>こまは倒れる</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../shared/common.css">
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script src="../shared/common.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+  #spinV { min-width: 92px; }
+  #trailLegend { position: absolute; right: 12px; bottom: 10px; font-size: 11px; color: var(--muted); background: rgba(13,16,20,.8); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
+  #trailLegend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin: 0 4px 0 8px; }
+</style>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div id="trailLegend"><i style="background:#ffd166"></i>軸先端の軌跡（歳差）<i style="background:#5cc8ff"></i>伸びの小さいばね<i style="background:#ff5d73"></i>伸びの大きいばね</div>
+  </div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション</h2>
+      <p id="missionText">スピン n を選んでこまを回し、<b>10 秒間倒れずに</b>立たせ続けよ。さらに<b>歳差の周期</b>を目標 <b id="targetT">—</b> 秒に合わせよ。</p>
+      <p class="note">回転が足りなければ倒れる。剛体でないこまは、回しすぎると遠心力で裂ける。</p>
+    </div>
+    <div class="panel">
+      <h2>レベル（世界の剛性）</h2>
+      <div class="seg" id="levels">
+        <button data-l="0" class="on">L1 κ=1.00</button><button data-l="1">L2 κ=0.35</button><button data-l="2">L3 κ=0.08</button>
+      </div>
+      <p class="note" id="levelNote"></p>
+    </div>
+    <div class="panel">
+      <h2>操作</h2>
+      <div class="row"><label>スピン n</label><input type="range" id="spin" min="4" max="30" step="0.5" value="12"><span class="val" id="spinV">12.0 rad/s</span></div>
+      <div class="row"><label>初期傾き θ₀</label><span class="val" style="text-align:left">0.30 rad（17°）固定</span></div>
+      <div class="btns"><button class="btn primary" id="go">回す</button><button class="btn" id="reset">リセット</button></div>
+      <p class="note">ドラッグで視点回転、ホイールでズーム。</p>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">経過時間</div><div class="v" id="mT">0.00 s</div></div>
+        <div class="meter"><div class="k">軸の傾き θ</div><div class="v" id="mTh">—</div></div>
+        <div class="meter"><div class="k">歳差周期（実測）</div><div class="v" id="mP">—</div></div>
+        <div class="meter"><div class="k">理論 T=2πIn/Mgh</div><div class="v" id="mPth">—</div></div>
+        <div class="meter"><div class="k">最大ひずみ</div><div class="v" id="mS">—</div></div>
+        <div class="meter"><div class="k">破断したばね</div><div class="v" id="mB">—</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>因果ログ</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>理論（教科書 3.9 こまの歳差運動）</h2>
+      <div class="formula">L = I n                         (3-84)
+dL/dt = N                       (3-86)
+N = ω × L                       (3-87)
+N = Mgh sinθ                    (3-89)
+ω' = Mgh / (I n)                (3-91)
+T  = 2π / ω' = 2π I n / (Mgh)   (3-92)</div>
+      <p class="note" id="params"></p>
+      <p class="note">剛体（κ=1）は重い対称こまのオイラー角 (θ, φ, ψ) の運動方程式を odex（Gragg–Bulirsch–Stoer 法）で解く。κ&lt;1 のこまは cannon-es の粒子とばねで組み、剛体の仮定（2点間距離が一定）を外している。</p>
+    </div>
+    <p class="ref">参照: 小原「力学A 第3章 剛体」3.9（兵庫県立大）／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 — 5.3 遠心力と向心力、原理 2・3・4・5・10</p>
+  </aside>
+</main>
+
+<script type="module">
+RV.header({ id: 'c5', chap: '第5章', title: 'こまは倒れる', libs: ['three.js', 'cannon-es', 'odex', 'Tone.js'] });
+if (window.Tone) RV.libOk('Tone.js');
+
+const stage = RV.$('#stage');
+const kBadge = RV.kappaBadge(stage);
+const log = RV.causal('#causal');
+const G = 9.8, TH0 = 0.30, DURATION = 10, BREAK = 0.18, K0 = 440;
+const LEVELS = [
+  { kappa: 1.00, target: 6.5, note: '剛体のこま。2点間の距離は常に一定で、重力のトルクは瞬時に全体へ伝わる（原理4）。' },
+  { kappa: 0.35, target: 9.5, note: '剛性が 35% に落ちた世界。こまは粒子とばねでかろうじて形を保つ。' },
+  { kappa: 0.08, target: 3.8, note: '剛性 8%。倒れない回転数と裂けない回転数の間の窓はわずかしかない。' }
+];
+
+let THREE, OrbitControls, CANNON, Solver;
+async function load(name, url) {
+  try { const m = await import(url); RV.libOk(name); return m; }
+  catch (e) { RV.libOk(name, false); console.error(name, e); throw e; }
+}
+THREE = await load('three.js', 'three');
+({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+CANNON = await load('cannon-es', 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js');
+({ Solver } = await load('odex', 'https://cdn.jsdelivr.net/npm/odex@3.0.0-rc.4/+esm'));
+
+// ---------- こまの形（粒子とばね）。剛体の慣性モーメントも同じ質量分布から求める ----------
+function layout() {
+  const P = [], H = 0.9, R = 0.9, N = 12;
+  P.push({ p: [0, 0, 0], m: 0.02, role: 'tip' });
+  P.push({ p: [0, 1.45, 0], m: 0.02, role: 'top' });
+  P.push({ p: [0, H, 0], m: 0.05, role: 'c' });
+  for (let i = 0; i < 6; i++) { const a = i / 6 * 2 * Math.PI + 0.26; P.push({ p: [0.45 * Math.cos(a), H, 0.45 * Math.sin(a)], m: 0.03, role: 'in' }); }
+  for (let i = 0; i < N; i++) { const a = i / N * 2 * Math.PI; P.push({ p: [R * Math.cos(a), H, R * Math.sin(a)], m: 0.06, role: 'out' }); }
+  const S = [], idx = r => P.map((q, i) => q.role === r ? i : -1).filter(i => i >= 0);
+  const out = idx('out'), inn = idx('in'), add = (a, b) => S.push([a, b]);
+  for (const i of [...out, ...inn, 2]) { add(0, i); add(1, i); }
+  add(0, 1);
+  for (let k = 0; k < out.length; k++) { add(out[k], out[(k + 1) % out.length]); add(out[k], out[(k + 2) % out.length]); }
+  for (let k = 0; k < inn.length; k++) { add(inn[k], inn[(k + 1) % inn.length]); add(inn[k], 2); }
+  for (const o of out) {
+    const d = inn.map(i => [i, Math.hypot(P[i].p[0] - P[o].p[0], P[i].p[2] - P[o].p[2])]).sort((a, b) => a[1] - b[1]);
+    add(o, d[0][0]); add(o, d[1][0]);
+  }
+  return { P, S, H, R };
+}
+const L = layout();
+const PAR = (() => {
+  let M = 0, hy = 0, I3 = 0, I1 = 0;
+  for (const q of L.P) { if (q.role === 'tip') continue; M += q.m; hy += q.m * q.p[1]; }
+  for (const q of L.P) {
+    if (q.role === 'tip') continue;
+    const [x, y, z] = q.p;
+    I3 += q.m * (x * x + z * z);
+    I1 += q.m * (y * y + x * x);
+  }
+  return { M, h: hy / M, I3, I1 };
+})();
+const FALL = Math.atan(L.H / L.R); // 円盤の縁が床に触れる傾き
+const Tth = n => 2 * Math.PI * PAR.I3 * n / (PAR.M * G * PAR.h);
+RV.$('#params').textContent = `M=${PAR.M.toFixed(2)} kg, h=${PAR.h.toFixed(3)} m, I(対称軸)=${PAR.I3.toFixed(3)} kg·m², I(支点まわり)=${PAR.I1.toFixed(3)} kg·m²。円盤の縁が床に触れる傾き ${(FALL * 180 / Math.PI).toFixed(0)}° で「倒れた」。`;
+
+// ---------- three.js ----------
+const canvas = RV.$('#cv');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0d10);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 100);
+camera.position.set(3.8, 2.8, 4.6);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0.7, 0);
+controls.enableDamping = true;
+RV.fitCanvas(canvas, (w, h, dpr) => { renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); });
+scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x20242a, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(3, 6, 2); scene.add(sun);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(4, 64), new THREE.MeshStandardMaterial({ color: 0x161c24, roughness: 0.95 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const grid = new THREE.PolarGridHelper(4, 16, 8, 64, 0x2b3542, 0x1e252e); grid.position.y = 0.002; scene.add(grid);
+const pivot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffd166 }));
+scene.add(pivot);
+
+// 剛体こまのメッシュ（局所 y 軸が対称軸）
+const rigidGroup = new THREE.Group();
+{
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5cc8ff, metalness: 0.2, roughness: 0.45 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2a6f99, metalness: 0.2, roughness: 0.5 });
+  const disk = new THREE.Mesh(new THREE.CylinderGeometry(L.R, L.R, 0.12, 48), mat); disk.position.y = L.H; rigidGroup.add(disk);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.35, L.H - 0.06, 32), dark); cone.rotation.x = Math.PI; cone.position.y = (L.H - 0.06) / 2; rigidGroup.add(cone);
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 16), dark); stem.position.y = L.H + 0.28; rigidGroup.add(stem);
+  // 回転が見えるように縞
+  for (let i = 0; i < 6; i++) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(L.R * 0.95, 0.125, 0.06), new THREE.MeshStandardMaterial({ color: i % 2 ? 0xff7a45 : 0xe6ebf1 }));
+    s.position.set(Math.cos(i / 6 * Math.PI) * 0, L.H, 0); s.rotation.y = i / 6 * Math.PI; s.position.x = 0; s.geometry.translate(L.R * 0.95 / 2, 0, 0);
+    rigidGroup.add(s);
+  }
+}
+scene.add(rigidGroup);
+
+// 粒子こまの描画
+const softGroup = new THREE.Group(); scene.add(softGroup);
+const partMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.05, 12, 8), new THREE.MeshStandardMaterial({ color: 0xff7a45, roughness: 0.4 }), L.P.length);
+softGroup.add(partMesh);
+const springGeo = new THREE.BufferGeometry();
+springGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(L.S.length * 6), 3));
+springGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(L.S.length * 6), 3));
+const springLines = new THREE.LineSegments(springGeo, new THREE.LineBasicMaterial({ vertexColors: true }));
+softGroup.add(springLines);
+
+// 軸先端の軌跡
+const TRAIL = 600;
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
+trailGeo.setDrawRange(0, 0);
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffd166 }));
+scene.add(trail);
+let trailN = 0;
+function pushTrail(v) {
+  const a = trailGeo.attributes.position.array;
+  if (trailN < TRAIL) trailN++; else a.copyWithin(0, 3);
+  a.set([v.x, v.y, v.z], (trailN - 1) * 3);
+  trailGeo.attributes.position.needsUpdate = true;
+  trailGeo.setDrawRange(0, trailN);
+}
+
+// ---------- 状態 ----------
+let level = 0, sim = null, finished = false;
+const ui = { spin: RV.$('#spin'), spinV: RV.$('#spinV') };
+function setLevel(l) {
+  level = l;
+  document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.l === l));
+  RV.$('#targetT').textContent = LEVELS[l].target.toFixed(1);
+  RV.$('#levelNote').textContent = LEVELS[l].note;
+  kBadge.set(LEVELS[l].kappa);
+  reset();
+}
+function showSpin() {
+  const n = +ui.spin.value;
+  ui.spinV.textContent = n.toFixed(1) + ' rad/s';
+  RV.$('#mPth').textContent = Tth(n).toFixed(2) + ' s';
+}
+
+// 剛体: odex で重い対称こま y=[θ, θ', φ, ψ]
+function makeRigid(n) {
+  const { M, h, I1, I3 } = PAR, w3 = n;
+  const phid0 = M * G * h / (I3 * w3);
+  const pphi = I1 * phid0 * Math.sin(TH0) ** 2 + I3 * w3 * Math.cos(TH0);
+  const phidot = th => (pphi - I3 * w3 * Math.cos(th)) / (I1 * Math.sin(th) ** 2);
+  const f = (t, y) => {
+    const th = y[0], s = Math.sin(th), c = Math.cos(th), pd = phidot(th);
+    return [y[1], (I1 * pd * pd * s * c - I3 * w3 * pd * s + M * G * h * s) / I1, pd, w3 - pd * c];
+  };
+  const sol = new Solver(f, 4, { absoluteTolerance: 1e-8, relativeTolerance: 1e-8, maxSteps: 1e6 }).integrate(0, [TH0, 0, 0, 0]);
+  return { kind: 'rigid', n, sol, y: [TH0, 0, 0, 0] };
+}
+// 非剛体: cannon-es の粒子とばね
+function makeSoft(n, kappa) {
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -G, 0) });
+  const phid0 = PAR.M * G * PAR.h / (PAR.I3 * n);
+  const ax = new CANNON.Vec3(Math.sin(TH0), Math.cos(TH0), 0);
+  const q = new CANNON.Quaternion(); q.setFromAxisAngle(new CANNON.Vec3(0, 0, 1), -TH0);
+  const omega = ax.scale(n).vadd(new CANNON.Vec3(0, phid0, 0));
+  const bodies = L.P.map(p => {
+    const pos = q.vmult(new CANNON.Vec3(...p.p));
+    const b = new CANNON.Body({ mass: p.role === 'tip' ? 0 : p.m, position: pos }); // 先端（支点）は固定
+    if (p.role !== 'tip') b.velocity.copy(omega.cross(pos));
+    world.addBody(b);
+    return b;
+  });
+  const k = K0 * kappa;
+  const springs = L.S.map(([a, b]) => {
+    const rest = bodies[a].position.distanceTo(bodies[b].position);
+    return { a, b, rest, s: new CANNON.Spring(bodies[a], bodies[b], { restLength: rest, stiffness: k, damping: 0.6 }), broken: false, strain: 0 };
+  });
+  return { kind: 'soft', n, world, bodies, springs, broken: 0, maxStrain: 0 };
+}
+function axisOf(s) {
+  if (s.kind === 'rigid') {
+    const [th, , ph] = s.y;
+    return { tilt: th, az: ph, v: new THREE.Vector3(Math.sin(th) * Math.cos(ph), Math.cos(th), -Math.sin(th) * Math.sin(ph)) };
+  }
+  const c = s.bodies[2].position, t = s.bodies[0].position;
+  const v = new THREE.Vector3(c.x - t.x, c.y - t.y, c.z - t.z);
+  const len = v.length();
+  return { tilt: Math.acos(Math.max(-1, Math.min(1, v.y / len))), az: Math.atan2(-v.z, v.x), v: v.normalize() };
+}
+
+function reset() {
+  sim = null; finished = false; trailN = 0; trailGeo.setDrawRange(0, 0);
+  const soft = LEVELS[level].kappa < 1;
+  rigidGroup.visible = !soft; softGroup.visible = soft;
+  // 待機姿勢
+  if (soft) { const s = makeSoft(+ui.spin.value, LEVELS[level].kappa); drawSoft(s); }
+  else drawRigid({ y: [TH0, 0, 0, 0] });
+  ['#mT', '#mTh', '#mP', '#mS', '#mB'].forEach(id => RV.$(id).textContent = '—');
+  RV.$('#go').disabled = false;
+  log.reset();
+  log.add(soft ? `剛性 κ=${LEVELS[level].kappa}：こまは粒子 ${L.P.length} 個・ばね ${L.S.length} 本でできている。自由度は 6 ではなく ${3 * (L.P.length - 1)}。` : '剛体のこま：自由度は 6、支点が固定なので回転の 3 だけ。', soft ? [] : [4], { t: 0 });
+}
+
+function start() {
+  const n = +ui.spin.value, kappa = LEVELS[level].kappa;
+  sim = kappa < 1 ? makeSoft(n, kappa) : makeRigid(n);
+  sim.t = 0; sim.unw = 0; sim.prevAz = null; sim.laps = 0; sim.lastWarn = 0;
+  finished = false; trailN = 0;
+  RV.$('#go').disabled = true;
+  log.reset();
+  log.add(`手がこまに回転を与えた：L = I n = ${(PAR.I3 * n).toFixed(2)} kg·m²/s (3-84)`, [1], { t: 0 });
+  log.add(`重力 Mg が重心に作用 → 支点 O まわりのモーメント N = Mgh sinθ = ${(PAR.M * G * PAR.h * Math.sin(TH0)).toFixed(2)} N·m (3-89)`, [9], { arrow: true, t: 0 });
+  if (sim.kind === 'rigid') {
+    log.add('剛体なので N は一瞬でこま全体に伝わる', [4], { arrow: true, t: 0 });
+    log.add('dL/dt = N：L の先端は倒れる向きではなく N の向き（水平）へ動く → 歳差 (3-86, 3-87)', [], { arrow: true, t: 0 });
+  } else {
+    log.add('回るこまは「回転場」をつくる。場の中の各粒子は場の力としての遠心力 mω²r を受ける', [10], { arrow: true, t: 0 });
+    log.add('粒子が外へ引かれ、ばねを引っぱる（作用）', [3], { arrow: true, t: 0 });
+    log.add('ばねは伸びた分だけ kΔx を反作用として返す＝向心力。返せる根拠は「伸びたこと」', [2, 5], { arrow: true, t: 0 });
+    log.add('剛体ではないので、重力のトルクはばねの伸び縮みを経由して遅れて伝わる', [], { arrow: true, t: 0 });
+  }
+  RV.sfx.tone(220 + n * 12, '8n');
+}
+
+function stepSim(dt) {
+  if (!sim || finished) return;
+  if (sim.kind === 'rigid') {
+    sim.t += dt;
+    sim.y = sim.sol(sim.t);
+  } else {
+    const sub = 10, h = dt / sub;
+    for (let i = 0; i < sub; i++) {
+      let mx = 0;
+      for (const sp of sim.springs) {
+        if (sp.broken) continue;
+        const d = sim.bodies[sp.a].position.distanceTo(sim.bodies[sp.b].position);
+        sp.strain = (d - sp.rest) / sp.rest;
+        if (Math.abs(sp.strain) > BREAK) { sp.broken = true; sim.broken++; continue; }
+        mx = Math.max(mx, Math.abs(sp.strain));
+        sp.s.applyForce();
+      }
+      sim.maxStrain = Math.max(sim.maxStrain, mx);
+      sim.curStrain = mx;
+      sim.world.step(h);
+    }
+    sim.t += dt;
+  }
+  const a = axisOf(sim);
+  if (sim.prevAz != null) { let d = a.az - sim.prevAz; if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; sim.unw += d; }
+  sim.prevAz = a.az;
+  sim.tilt = a.tilt;
+  const laps = Math.floor(sim.unw / (2 * Math.PI));
+  if (laps > sim.laps) { sim.laps = laps; log.add(`歳差 ${laps} 周目（平均周期 ${(2 * Math.PI * sim.t / sim.unw).toFixed(2)} s）`, [], { t: sim.t }); RV.sfx.tone(660, '32n'); }
+  if (sim.kind === 'soft') {
+    if (sim.curStrain > BREAK * 0.75 && sim.t - sim.lastWarn > 1) { sim.lastWarn = sim.t; log.add(`ひずみ ${(sim.curStrain * 100).toFixed(0)}%：ばねが返せる反作用の限界に近い`, [5], { t: sim.t }); }
+    if (sim.broken > 0 && !sim.toldBreak) { sim.toldBreak = true; log.add('遠心力に見合う伸びを超え、ばねが反作用を返せなくなった → 破断', [2, 5], { arrow: true, t: sim.t }); RV.sfx.thud(0.8); }
+    if (sim.broken > L.S.length * 0.12) return finish('torn');
+  }
+  if (a.tilt > FALL) return finish('fell');
+  if (sim.t >= DURATION) return finish('ok');
+}
+
+function measuredT() { return sim && sim.unw > 0.05 ? 2 * Math.PI * sim.t / sim.unw : NaN; }
+
+async function finish(kind) {
+  finished = true;
+  const n = sim.n, Tm = measuredT(), target = LEVELS[level].target, Tt = Tth(n);
+  if (kind === 'fell') {
+    log.add(`傾き ${(sim.tilt * 180 / Math.PI).toFixed(0)}° で円盤が床に触れた。In が小さく章動が抑えられなかった`, [], { t: sim.t });
+    RV.sfx.fail(); RV.toast(stage, '倒れた — スピン不足');
+  } else if (kind === 'torn') {
+    log.add(`ばね ${sim.broken} 本が破断。こまは形を保てない`, [5], { t: sim.t });
+    RV.sfx.fail(); RV.toast(stage, '裂けた — 回しすぎ');
+  } else {
+    RV.sfx.win();
+  }
+  RV.$('#go').disabled = false;
+  if (kind !== 'ok') {
+    const why = kind === 'fell'
+      ? 'スピン n が小さいと角運動量 L=In も小さく、重力のトルクで軸が大きく振れる（章動）。もう少し速く回そう。'
+      : '回転場の遠心力 mω²r に対して、ばねは伸びることでしか反作用（向心力）を返せない。伸びが限界を超えたばねは切れる。回転を落とそう。';
+    RV.modal(kind === 'fell' ? 'こまが倒れた' : 'こまが裂けた', `<p>${why}</p><p class="note">n = ${n.toFixed(1)} rad/s、${sim.t.toFixed(2)} 秒で終了。</p>`, [{ label: 'もう一度', primary: true, onClick: reset }]);
+    return;
+  }
+  const err = Math.abs(Tm - target) / target;
+  const stars = RV.grade(err, [0.08, 0.2, Infinity]);
+  RV.saveStars('c5', stars);
+  log.add(`10 秒間立ち続けた。歳差周期 ${Tm.toFixed(2)} s（目標 ${target.toFixed(1)} s、誤差 ${(err * 100).toFixed(0)}%）`, [], { t: sim.t });
+  const soft = sim.kind === 'soft';
+  const comment = soft
+    ? `粒子こまの最大ひずみは ${(sim.maxStrain * 100).toFixed(0)}%。形が変わると I も h も一定ではなくなり、式 (3-92) の「I は剛体に固有の定数」という前提が崩れる。回転を速くするほど遠心力でこまが膨らみ、ばねが切れる危険が増す。`
+    : `理論式 (3-92) は「速いこま」の近似。実際のこまは章動（うなずき運動）を伴うので、実測は理論から少しずれる。`;
+  RV.modal(`クリア ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}`,
+    `<table style="width:100%;font-family:var(--mono);font-size:13px">
+      <tr><td>スピン n</td><td>${n.toFixed(1)} rad/s</td></tr>
+      <tr><td>歳差周期 実測</td><td>${Tm.toFixed(2)} s</td></tr>
+      <tr><td>理論 2πIn/(Mgh) (3-92)</td><td>${Tt.toFixed(2)} s</td></tr>
+      <tr><td>目標</td><td>${target.toFixed(1)} s（誤差 ${(err * 100).toFixed(1)}%）</td></tr>
+    </table><p>${comment}</p>`,
+    [{ label: '閉じる' }, { label: 'もう一度', primary: true, onClick: reset }]);
+}
+
+// ---------- 描画 ----------
+const tmpM = new THREE.Matrix4(), qY = new THREE.Quaternion(), qZ = new THREE.Quaternion(), qS = new THREE.Quaternion();
+const UP = new THREE.Vector3(0, 1, 0), ZA = new THREE.Vector3(0, 0, 1);
+function drawRigid(s) {
+  const [th, , ph, ps] = s.y;
+  qY.setFromAxisAngle(UP, ph); qZ.setFromAxisAngle(ZA, -th); qS.setFromAxisAngle(UP, ps);
+  rigidGroup.quaternion.copy(qY).multiply(qZ).multiply(qS);
+}
+const cA = new THREE.Color(0x5cc8ff), cB = new THREE.Color(0xff5d73), cT = new THREE.Color();
+function drawSoft(s) {
+  s.bodies.forEach((b, i) => { tmpM.makeTranslation(b.position.x, b.position.y, b.position.z); partMesh.setMatrixAt(i, tmpM); });
+  partMesh.instanceMatrix.needsUpdate = true;
+  const pos = springGeo.attributes.position.array, col = springGeo.attributes.color.array;
+  s.springs.forEach((sp, i) => {
+    const a = s.bodies[sp.a].position, b = s.bodies[sp.b].position;
+    if (sp.broken) { pos.fill(0, i * 6, i * 6 + 6); return; }
+    pos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
+    cT.copy(cA).lerp(cB, Math.min(1, Math.abs(sp.strain) / BREAK));
+    col.set([cT.r, cT.g, cT.b, cT.r, cT.g, cT.b], i * 6);
+  });
+  springGeo.attributes.position.needsUpdate = true;
+  springGeo.attributes.color.needsUpdate = true;
+}
+let trailTick = 0;
+function render() {
+  if (sim) {
+    if (sim.kind === 'rigid') drawRigid(sim); else drawSoft(sim);
+    if (!finished && ++trailTick % 2 === 0) {
+      const a = axisOf(sim);
+      pushTrail(a.v.clone().multiplyScalar(1.45));
+    }
+    RV.$('#mT').textContent = sim.t.toFixed(2) + ' s';
+    RV.$('#mTh').textContent = (sim.tilt * 180 / Math.PI).toFixed(1) + '°';
+    const Tm = measuredT();
+    RV.$('#mP').textContent = isFinite(Tm) ? Tm.toFixed(2) + ' s' : '—';
+    if (sim.kind === 'soft') {
+      RV.$('#mS').textContent = (sim.curStrain * 100 || 0).toFixed(1) + '%';
+      RV.$('#mB').textContent = `${sim.broken} / ${L.S.length}`;
+    } else { RV.$('#mS').textContent = '0（剛体）'; RV.$('#mB').textContent = '—'; }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+RV.loop(stepSim, render, 1 / 60);
+
+// ---------- UI ----------
+ui.spin.addEventListener('input', () => { showSpin(); if (!sim) reset(); });
+RV.$('#go').onclick = start;
+RV.$('#reset').onclick = reset;
+document.querySelectorAll('#levels button').forEach(b => b.onclick = () => setLevel(+b.dataset.l));
+showSpin();
+setLevel(0);
+window.__c5 = { start, reset, setLevel, get sim() { return sim; }, get finished() { return finished; }, measuredT, ui };
+
+RV.modal('第5章　こまは倒れる',
+  `<p>剛体が世界から消えはじめた。こまは「回転軸に関して対称な質量分布をもつ回転<b>剛体</b>」と定義される（教科書 3.9.1）。剛体でなくなったこまは、まだ回れるだろうか。</p>
+   <p>回るこまは重力に引き倒されそうになりながら、倒れずに軸の先端で円を描く——<b>歳差運動</b>。その周期は T = 2πIn/(Mgh)。</p>
+   <p><b>目的：</b>スピン n を決めて回し、10 秒間倒れずに立たせ、歳差周期を目標に近づけよ。L2・L3 ではこまは粒子とばねでできていて、回しすぎると遠心力で裂ける。</p>`,
+  [{ label: 'はじめる', primary: true }]);
+</script>
+</body>
+</html>
