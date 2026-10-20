@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剛体ゼロ</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../shared/common.css">
+<script src="../shared/common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gpu.js@2.16.0/dist/gpu-browser.min.js"></script>
+<style>
+  .grav-pad { display: flex; gap: 6px; }
+  .grav-pad .btn { flex: 1; font-size: 18px; padding: 8px 0; user-select: none; touch-action: none; }
+  .phase { display: flex; gap: 3px; margin-top: 4px; }
+  .phase span { flex: 1; text-align: center; font-size: 10px; padding: 2px 0; border-radius: 3px; background: #121820; color: var(--muted); }
+  .phase span.on { background: var(--accent); color: #1a0d06; font-weight: 700; }
+  .phase span.done { background: #2a323d; color: #5c6876; text-decoration: line-through; }
+  #stage { cursor: crosshair; touch-action: none; }
+</style>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション</h2>
+      <p>世界の剛性 κ が 0 になる前に、<b style="color:var(--rigid)">最後の剛体コア</b>（水色）を右下の<b style="color:var(--good)">ゴール槽</b>へ運べ。</p>
+      <p class="note">コアの粒子の 60% 以上がゴール槽に 1.5 秒とどまればクリア。残った κ で★が決まる（κ≥0.50 ★3 / ≥0.30 ★2 / それ以外 ★1）。</p>
+    </div>
+    <div class="panel">
+      <h2>レベル（κ の減衰速度）</h2>
+      <div class="seg" id="levels">
+        <button data-l="0" class="on">1: 120秒</button><button data-l="1">2: 85秒</button><button data-l="2">3: 60秒</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>操作 — 重力の向きを回す</h2>
+      <div class="grav-pad">
+        <button class="btn" id="rotL" title="反時計回り">⟲</button>
+        <button class="btn" id="gDown" title="真下に戻す">↓</button>
+        <button class="btn" id="rotR" title="時計回り">⟳</button>
+      </div>
+      <p class="note">← / → キー（押している間回転）、またはステージをドラッグするとその方向が「下」になる。</p>
+      <div class="btns" style="margin-top:6px">
+        <button class="btn" id="retry">やり直す</button>
+        <button class="btn" id="renderMode">描画: メタボール</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">世界の剛性 κ</div><div class="v" id="mK">1.00</div></div>
+        <div class="meter"><div class="k">コアの状態</div><div class="v" id="mState" style="font-size:13px">剛体</div></div>
+        <div class="meter"><div class="k">2点間距離のばらつき σ</div><div class="v" id="mSigma">0.0%</div></div>
+        <div class="meter"><div class="k">コアの自由度</div><div class="v" id="mDof">3</div></div>
+        <div class="meter"><div class="k">ゴール内のコア</div><div class="v" id="mGoal">0%</div></div>
+        <div class="meter"><div class="k">粒子数 / 描画</div><div class="v" id="mN" style="font-size:12px">-</div></div>
+      </div>
+      <div style="margin-top:8px">
+        <div class="note">城（周囲の粒子）の相</div>
+        <div class="phase" id="phCastle"></div>
+        <div class="note" style="margin-top:4px">コアの相</div>
+        <div class="phase" id="phCore"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>因果ログ</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>理論</h2>
+      <div class="formula">剛体の定義（§3.1）
+  |r_i − r_j| = 一定（すべての i, j）
+→ σ = rms((|r_i−r_j| − d₀)/d₀) = 0
+
+平面運動の自由度（§3.7）＝ 3（x_G, y_G, φ）
+  M ẍ_G = ΣX_i, M ÿ_G = ΣY_i   (3–47)
+  I_G φ̈ = N_G                  (3–49)
+剛体でなくなった粒子 N 個 ＝ 自由度 2N
+
+原理4: 剛体は力を瞬時に伝える（透過伝達性）
+原理10: 加速度系／重力には「場」が生じる</div>
+      <p class="note">LiquidFun の <code>b2_rigidParticleGroup</code> は粒子群に剛体拘束を課す。κ の低下に合わせて rigid → elastic → spring → viscous → water と拘束を外していく（群を同じ粒子位置で作り直す）。</p>
+    </div>
+    <div class="ref">参照: 小原「力学A 第3章 剛体」(兵庫県立大) §3.1, 3.4, 3.7 ／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 ／ LiquidFun (liquidfun-wasm 7.0.0), gpu.js 2.16.0</div>
+  </aside>
+</main>
+
+<script type="module">
+import Box2DFactory from 'https://cdn.jsdelivr.net/npm/liquidfun-wasm@7.0.0/dist/es/entry.js';
+
+RV.header({ id: 'c7', chap: '終章', title: '剛体ゼロ', libs: ['LiquidFun', 'gpu.js', 'Tone.js'] });
+if (window.Tone) RV.libOk('Tone.js');
+const stage = RV.$('#stage'), cv = RV.$('#cv'), ctx = cv.getContext('2d');
+const kBadge = RV.kappaBadge(stage);
+const log = RV.causal('#causal');
+
+// ---------- 世界の寸法（m, y 上向き） ----------
+const WW = 16, WH = 10;
+const R = 0.075;                       // 粒子半径
+const GOAL = { x0: 12.25, x1: 16, y0: 0, y1: 3.6 };
+const LEVELS = [120, 85, 60];          // κ が 1→0 になるまでの秒数
+const PHASES = ['剛体', '弾性', 'ばね', '粘性', '水'];
+const CASTLE_TH = [0.85, 0.7, 0.55, 0.4];   // この κ を下回ると次の相へ
+const CORE_TH = [0.6, 0.45, 0.3, 0.15];
+
+let B, world, ps, gpu = null, kernel = null, gridW = 0, gridH = 0, gpuMode = '-';
+let level = 0, kappa = 1, simT = 0, gAngle = -Math.PI / 2, groups = [], pairs = [], goalHold = 0, over = false, started = false;
+let renderMeta = true, castlePhase = 0, slowFrames = 0;
+let view = { s: 50, ox: 0, oy: 0, w: 800, h: 500 };
+
+for (const id of ['phCastle', 'phCore']) RV.$('#' + id).innerHTML = PHASES.map(p => `<span>${p}</span>`).join('');
+
+function phaseOf(k, th) { let p = 0; while (p < th.length && k < th[p]) p++; return p; }
+
+// 相 → LiquidFun フラグ
+function flagsFor(p) {
+  const F = B;
+  switch (p) {
+    case 0: return { pf: 0, gf: F.b2_solidParticleGroup | F.b2_rigidParticleGroup };
+    case 1: return { pf: F.b2_elasticParticle, gf: F.b2_solidParticleGroup };
+    case 2: return { pf: F.b2_springParticle, gf: F.b2_solidParticleGroup };
+    case 3: return { pf: F.b2_viscousParticle | F.b2_tensileParticle, gf: 0 };
+    default: return { pf: F.b2_waterParticle, gf: 0 };
+  }
+}
+
+function heap() { return B.HEAPF32; }
+function posBase() { return B.getPointer(ps.GetPositionBuffer()) >> 2; }
+function velBase() { return B.getPointer(ps.GetVelocityBuffer()) >> 2; }
+
+function makeBox(cx, cy, hx, hy, phase, kind) {
+  const shape = new B.b2PolygonShape();
+  shape.SetAsBox(hx, hy);
+  const def = new B.b2ParticleGroupDef();
+  const f = flagsFor(phase);
+  def.set_flags(f.pf);
+  def.set_groupFlags(f.gf);
+  def.set_shape(shape);
+  def.set_position(new B.b2Vec2(cx, cy));
+  def.set_strength(1);
+  const g = ps.CreateParticleGroup(def);
+  B.destroy(def); B.destroy(shape);
+  return { g, kind, phase };
+}
+
+// 同じ粒子位置・速度で、別の拘束（フラグ）の群に作り直す
+function rebuild(o, phase) {
+  const g = o.g, i0 = g.GetBufferIndex(), n = g.GetParticleCount();
+  if (n === 0) { o.phase = phase; return; }
+  const H = heap(), pb = posBase(), vb = velBase();
+  const ptr = B._malloc(n * 8);
+  const dst = ptr >> 2;
+  let vx = 0, vy = 0;
+  for (let i = 0; i < n; i++) {
+    H[dst + 2 * i] = H[pb + 2 * (i0 + i)];
+    H[dst + 2 * i + 1] = H[pb + 2 * (i0 + i) + 1];
+    vx += H[vb + 2 * (i0 + i)]; vy += H[vb + 2 * (i0 + i) + 1];
+  }
+  const def = new B.b2ParticleGroupDef();
+  const f = flagsFor(phase);
+  def.set_flags(f.pf);
+  def.set_groupFlags(f.gf);
+  def.set_particleCount(n);
+  def.set_positionData(B.wrapPointer(ptr, B.b2Vec2));
+  def.set_linearVelocity(new B.b2Vec2(vx / n, vy / n));
+  def.set_strength(1);
+  g.DestroyParticles(false);
+  o.g = ps.CreateParticleGroup(def);
+  o.phase = phase;
+  B.destroy(def);
+  B._free(ptr);
+}
+
+function staticBox(cx, cy, hx, hy) {
+  const bd = new B.b2BodyDef();
+  bd.set_type(B.b2_staticBody);
+  bd.set_position(new B.b2Vec2(cx, cy));
+  const body = world.CreateBody(bd);
+  const sh = new B.b2PolygonShape();
+  sh.SetAsBox(hx, hy);
+  body.CreateFixture(sh, 0);
+  B.destroy(bd); B.destroy(sh);
+}
+const WALLS = [
+  [WW / 2, -0.25, WW / 2 + 0.5, 0.25], [WW / 2, WH + 0.25, WW / 2 + 0.5, 0.25],
+  [-0.25, WH / 2, 0.25, WH / 2 + 0.5], [WW + 0.25, WH / 2, 0.25, WH / 2 + 0.5],
+  [2.6, 6.85, 2.6, 0.15],              // コアの棚
+  [7.6, 8.5, 0.35, 1.5],               // 天井から垂れる幕
+  [12.1, 1.8, 0.15, 1.8],              // ゴール槽の仕切り
+  [14.6, 6.2, 1.4, 0.15]               // ゴール槽の上の庇
+];
+
+function buildWorld() {
+  if (world) { B.destroy(world); }
+  world = new B.b2World(new B.b2Vec2(0, -10));
+  for (const w of WALLS) staticBox(...w);
+  const psd = new B.b2ParticleSystemDef();
+  psd.set_radius(R);
+  psd.set_maxCount(4000);
+  psd.set_dampingStrength(0.4);
+  ps = world.CreateParticleSystem(psd);
+  B.destroy(psd);
+  groups = [];
+  // 城: 煉瓦を積む
+  const bw = 0.45, bh = 0.32;
+  for (let row = 0; row < 7; row++) {
+    const off = row % 2 ? bw : 0;
+    for (let c = 0; c < 4; c++) {
+      const x = 5.6 + off + c * (2 * bw + 0.02);
+      if (x > 9.6) continue;
+      groups.push(makeBox(x, bh + 0.01 + row * (2 * bh + 0.02), bw, bh, 0, 'castle'));
+    }
+  }
+  // 塔の上の小塔
+  groups.push(makeBox(6.6, 4.9, 0.3, 0.45, 0, 'castle'));
+  groups.push(makeBox(8.6, 4.9, 0.3, 0.45, 0, 'castle'));
+  // 最後の剛体コア
+  groups.push(makeBox(1.3, 7.55, 0.5, 0.5, 0, 'core'));
+  // 2点間距離の基準 d0（コアの局所インデックスで保持）
+  const core = coreGroup();
+  const n = core.g.GetParticleCount(), H = heap(), pb = posBase(), i0 = core.g.GetBufferIndex();
+  pairs = [];
+  for (let k = 0; k < 240; k++) {
+    const a = (Math.random() * n) | 0; let b = (Math.random() * n) | 0;
+    if (a === b) b = (b + 1) % n;
+    const dx = H[pb + 2 * (i0 + a)] - H[pb + 2 * (i0 + b)], dy = H[pb + 2 * (i0 + a) + 1] - H[pb + 2 * (i0 + b) + 1];
+    pairs.push([a, b, Math.hypot(dx, dy)]);
+  }
+}
+const coreGroup = () => groups.find(o => o.kind === 'core');
+
+function setGravity(a) {
+  gAngle = a;
+  world.SetGravity(new B.b2Vec2(10 * Math.cos(a), 10 * Math.sin(a)));
+}
+
+function reset(startNow = true) {
+  buildWorld();
+  kappa = 1; simT = 0; goalHold = 0; over = false; castlePhase = 0;
+  setGravity(-Math.PI / 2);
+  log.reset();
+  log.add('世界の剛性 κ=1。コアは剛体：任意の2粒子間距離が一定（§3.1）', [4]);
+  log.add('重力の「場」がコア全体に一様に作用', [10]);
+  started = startNow;
+}
+
+// ---------- 入力 ----------
+let rotDir = 0;
+const hold = (el, d) => {
+  el.addEventListener('pointerdown', e => { rotDir = d; e.preventDefault(); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, () => { if (rotDir === d) rotDir = 0; }));
+};
+hold(RV.$('#rotL'), 1); hold(RV.$('#rotR'), -1);
+RV.$('#gDown').onclick = () => { setGravity(-Math.PI / 2); log.add('重力を真下へ戻す', [10], { arrow: true, t: simT }); };
+addEventListener('keydown', e => { if (e.key === 'ArrowLeft') rotDir = 1; if (e.key === 'ArrowRight') rotDir = -1; if (e.key === 'ArrowDown') RV.$('#gDown').click(); });
+addEventListener('keyup', e => { if ((e.key === 'ArrowLeft' && rotDir === 1) || (e.key === 'ArrowRight' && rotDir === -1)) rotDir = 0; });
+let dragging = false;
+function dragTo(e) {
+  const r = stage.getBoundingClientRect();
+  const dx = e.clientX - r.left - r.width / 2, dy = -(e.clientY - r.top - r.height / 2);
+  if (Math.hypot(dx, dy) > 20) setGravity(Math.atan2(dy, dx));
+}
+stage.addEventListener('pointerdown', e => { dragging = true; stage.setPointerCapture(e.pointerId); dragTo(e); });
+stage.addEventListener('pointermove', e => { if (dragging) dragTo(e); });
+stage.addEventListener('pointerup', () => { dragging = false; log.add(`重力の向き ${(gAngle * 180 / Math.PI).toFixed(0)}° → 場の力 mg がコアの各粒子に作用`, [10, 1], { arrow: true, t: simT }); });
+RV.$('#retry').onclick = () => reset();
+RV.$('#renderMode').onclick = e => { renderMeta = !renderMeta; e.target.textContent = '描画: ' + (renderMeta ? 'メタボール' : '粒子'); };
+RV.$('#levels').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  level = +b.dataset.l;
+  RV.$('#levels').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  reset();
+});
+
+// ---------- シミュレーション ----------
+let lastSigmaLog = 0;
+function step(dt) {
+  if (over) return;
+  if (rotDir) setGravity(gAngle + rotDir * dt * Math.PI * 0.5);
+  if (!started) return;
+  simT += dt;
+  kappa = Math.max(0, 1 - simT / LEVELS[level]);
+  // 相転移（融解）
+  const pc = phaseOf(kappa, CASTLE_TH), pk = phaseOf(kappa, CORE_TH);
+  for (const o of groups) {
+    const want = o.kind === 'core' ? pk : pc;
+    if (o.phase !== want) {
+      rebuild(o, want);
+      if (o.kind === 'core') {
+        RV.sfx.fail();
+        const msg = [
+          '', 'コアの剛体拘束が外れた：押した力は瞬時には伝わらず、粒子間の弾性で順に伝播する',
+          'コアは「ばね」でつながるだけになった：距離はもう一定でない',
+          'コアは粘性流体：形を保てない', 'コアは水になった：自由度 2N、慣性モーメントも定義できない'][want];
+        log.add(msg, want === 1 ? [4, 3] : [4], { t: simT, force: true });
+        RV.toast(stage, 'コア: ' + PHASES[want] + ' 相へ');
+      }
+    }
+  }
+  if (pc !== castlePhase) {
+    castlePhase = pc;
+    log.add(`城が「${PHASES[pc]}」相に融解（κ<${CASTLE_TH[pc - 1]}）`, [4], { t: simT });
+  }
+  world.Step(dt, 6, 2, 3);
+  const st = coreStats();
+  if (st && st.goal >= 0.6) { goalHold += dt; if (goalHold >= 1.5) finish(true); } else goalHold = 0;
+  if (kappa <= 0) finish(false);
+}
+
+function coreStats() {
+  const o = coreGroup(); if (!o) return null;
+  const g = o.g, n = g.GetParticleCount(), i0 = g.GetBufferIndex();
+  const H = heap(), pb = posBase();
+  let inGoal = 0;
+  for (let i = 0; i < n; i++) {
+    const x = H[pb + 2 * (i0 + i)], y = H[pb + 2 * (i0 + i) + 1];
+    if (x > GOAL.x0 && x < GOAL.x1 && y > GOAL.y0 && y < GOAL.y1) inGoal++;
+  }
+  let s2 = 0, m = 0;
+  for (const [a, b, d0] of pairs) {
+    if (a >= n || b >= n) continue;
+    const dx = H[pb + 2 * (i0 + a)] - H[pb + 2 * (i0 + b)], dy = H[pb + 2 * (i0 + a) + 1] - H[pb + 2 * (i0 + b) + 1];
+    const e = (Math.hypot(dx, dy) - d0) / d0; s2 += e * e; m++;
+  }
+  return { n, goal: n ? inGoal / n : 0, sigma: m ? Math.sqrt(s2 / m) : 0, phase: o.phase };
+}
+
+function finish(win) {
+  if (over) return;
+  over = true;
+  if (win) {
+    const stars = Math.max(1, RV.grade(1 - kappa, [0.5, 0.7, 1.01]));
+    RV.saveStars('c7', stars);
+    RV.sfx.win();
+    log.add(`ゴール到達。残り κ=${kappa.toFixed(2)}`, [], { t: simT, force: true });
+    RV.modal('最後の剛体を届けた', `<p>残り κ = <b>${kappa.toFixed(2)}</b>　評価 <span class="stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span></p>
+      <p>剛体とは「どの2点の距離も変わらない」理想化だった（§3.1）。それが消えた世界では、力は一瞬では伝わらず（原理4の破れ）、物体の配置は 3 個の数ではなく 2N 個の数でしか決まらない。</p>`,
+      [{ label: 'もう一度', onClick: reset }, { label: '世界地図へ', primary: true, onClick: () => location.href = '../index.html' }]);
+  } else {
+    RV.sfx.fail();
+    log.add('κ=0：世界から剛体が消えた', [], { t: simT, force: true });
+    RV.modal('κ = 0', `<p>剛性が尽き、コアも水になって散った。重力の向きを早めに使って、コアが「剛体のうちに」城を越えよう。</p>`,
+      [{ label: 'やり直す', primary: true, onClick: reset }]);
+  }
+}
+window.__c7 = { finish, coreStats, get kappa() { return kappa; }, set kappa(v) { simT = (1 - v) * LEVELS[level]; }, start() { started = true; }, teleportCore(x, y) {
+  const o = coreGroup(), g = o.g, n = g.GetParticleCount(), i0 = g.GetBufferIndex(), H = heap(), pb = posBase();
+  let cx = 0, cy = 0; for (let i = 0; i < n; i++) { cx += H[pb + 2 * (i0 + i)]; cy += H[pb + 2 * (i0 + i) + 1]; }
+  cx /= n; cy /= n;
+  for (let i = 0; i < n; i++) { H[pb + 2 * (i0 + i)] += x - cx; H[pb + 2 * (i0 + i) + 1] += y - cy; }
+} };
+
+// ---------- 描画 ----------
+const MAXN = 4000;
+const posArr = new Float32Array(MAXN * 2), infoArr = new Float32Array(MAXN);
+function setupGPU() {
+  try {
+    gpu = new GPU.GPU();
+    gpuMode = gpu.mode;
+    const cpu = gpu.mode === 'cpu';
+    gridW = cpu ? 96 : 320; gridH = cpu ? 60 : 200;
+    kernel = gpu.createKernel(function (pos, info, n) {
+      const wx = (this.thread.x + 0.5) / this.constants.gw * this.constants.ww;
+      const wy = (this.thread.y + 0.5) / this.constants.gh * this.constants.wh;
+      const h2 = this.constants.h * this.constants.h;
+      let core = 0, other = 0, ph = 0;
+      for (let i = 0; i < this.constants.maxN; i++) {
+        if (i >= n) break;
+        const dx = pos[2 * i] - wx, dy = pos[2 * i + 1] - wy;
+        const q = 1 - (dx * dx + dy * dy) / h2;
+        if (q > 0) {
+          const w = q * q * q;
+          if (info[i] < 0) { core += w; } else { other += w; ph += w * info[i]; }
+        }
+      }
+      let r = 0, g = 0, b = 0, a = 0;
+      if (other > 0.0001) {
+        const p = ph / other;              // 0=剛体 1=弾性 2=ばね 3=粘性 4=水
+        const t = Math.min(1, Math.max(0, (other - 0.35) * 3));
+        // 剛体(灰青) → 弾性(橙) → ばね(赤橙) → 粘性(紫) → 水(青)
+        let cr = 0.42, cg = 0.48, cb = 0.58;
+        if (p < 1) { cr = 0.42 + (0.88 - 0.42) * p; cg = 0.48 + (0.54 - 0.48) * p; cb = 0.58 + (0.30 - 0.58) * p; }
+        else if (p < 2) { const u = p - 1; cr = 0.88 - 0.04 * u; cg = 0.54 - 0.12 * u; cb = 0.30 - 0.05 * u; }
+        else if (p < 3) { const u = p - 2; cr = 0.84 - 0.24 * u; cg = 0.42 - 0.02 * u; cb = 0.25 + 0.57 * u; }
+        else { const u = Math.min(1, p - 3); cr = 0.60 - 0.45 * u; cg = 0.40 + 0.15 * u; cb = 0.82 + 0.13 * u; }
+        r = cr * t; g = cg * t; b = cb * t; a = t;
+      }
+      if (core > 0.35) {
+        const t = Math.min(1, (core - 0.35) * 3);
+        r = r * (1 - t) + 0.36 * t; g = g * (1 - t) + 0.85 * t; b = b * (1 - t) + 1.0 * t; a = Math.max(a, t);
+      }
+      this.color(r, g, b, a);
+    }, {
+      output: [gridW, gridH], graphical: true, constants: { gw: gridW, gh: gridH, ww: WW, wh: WH, h: R * 3.2, maxN: MAXN },
+      argumentTypes: { pos: 'Array', info: 'Array', n: 'Float' }, loopMaxIterations: MAXN
+    });
+    RV.libOk('gpu.js');
+  } catch (e) {
+    console.warn('gpu.js 初期化失敗', e);
+    RV.libOk('gpu.js', false); renderMeta = false; kernel = null;
+  }
+}
+
+function resize(w, h, dpr) {
+  view.w = w; view.h = h;
+  view.s = Math.min(w / (WW + 0.6), h / (WH + 0.6));
+  view.ox = (w - WW * view.s) / 2; view.oy = (h - WH * view.s) / 2;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+const X = x => view.ox + x * view.s, Y = y => view.oy + (WH - y) * view.s;
+
+function render() {
+  if (!world) return;
+  ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, view.w, view.h);
+  // ゴール
+  ctx.fillStyle = 'rgba(111,220,140,.10)'; ctx.strokeStyle = 'rgba(111,220,140,.6)'; ctx.setLineDash([6, 4]);
+  ctx.fillRect(X(GOAL.x0), Y(GOAL.y1), (GOAL.x1 - GOAL.x0) * view.s, (GOAL.y1 - GOAL.y0) * view.s);
+  ctx.strokeRect(X(GOAL.x0), Y(GOAL.y1), (GOAL.x1 - GOAL.x0) * view.s, (GOAL.y1 - GOAL.y0) * view.s);
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(111,220,140,.8)'; ctx.font = '12px sans-serif'; ctx.fillText('GOAL', X(GOAL.x0) + 6, Y(GOAL.y1) + 16);
+
+  // 粒子を集める
+  const H = heap(), pb = posBase();
+  let n = 0;
+  for (const o of groups) {
+    const g = o.g, c = g.GetParticleCount(), i0 = g.GetBufferIndex();
+    const tag = o.kind === 'core' ? -1 : o.phase;
+    for (let i = 0; i < c && n < MAXN; i++, n++) {
+      posArr[2 * n] = H[pb + 2 * (i0 + i)]; posArr[2 * n + 1] = H[pb + 2 * (i0 + i) + 1]; infoArr[n] = tag;
+    }
+  }
+  if (renderMeta && kernel) {
+    try {
+      const tk = performance.now();
+      kernel(posArr, infoArr, n);
+      // 遅い環境（ソフトウェアGL等）では自動で粒子描画に切り替える
+      slowFrames = performance.now() - tk > 45 ? slowFrames + 1 : Math.max(0, slowFrames - 1);
+      if (slowFrames > 20) { renderMeta = false; RV.$('#renderMode').textContent = '描画: 粒子'; RV.toast(stage, '描画が重いので粒子表示に切り替えました'); }
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalCompositeOperation = 'lighter';   // 黒(空)は背景に影響しない
+      ctx.drawImage(kernel.canvas, X(0), Y(WH), WW * view.s, WH * view.s);
+      ctx.globalCompositeOperation = 'source-over';
+    } catch (e) { console.warn(e); renderMeta = false; }
+  } else {
+    const cols = ['#5b6b84', '#e08a4c', '#d76f3f', '#9a6fd1', '#3f8de0'];
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = infoArr[i] < 0 ? '#5cd8ff' : cols[infoArr[i]];
+      ctx.fillRect(X(posArr[2 * i]) - R * view.s, Y(posArr[2 * i + 1]) - R * view.s, 2 * R * view.s, 2 * R * view.s);
+    }
+  }
+  // 静的な壁（地面＝原理7 の「動かないもの」）
+  ctx.fillStyle = '#39424e';
+  for (const [cx, cy, hx, hy] of WALLS) ctx.fillRect(X(cx - hx), Y(cy + hy), 2 * hx * view.s, 2 * hy * view.s);
+  // 重力矢印
+  const ax = view.w - 54, ay = 58;
+  ctx.strokeStyle = '#ffd166'; ctx.fillStyle = '#ffd166'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(ax, ay, 30, 0, Math.PI * 2); ctx.globalAlpha = .25; ctx.stroke(); ctx.globalAlpha = 1;
+  const ex = ax + 26 * Math.cos(gAngle), ey = ay - 26 * Math.sin(gAngle);
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
+  ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.font = '11px sans-serif'; ctx.fillText('g', ax - 3, ay + 46);
+  ctx.lineWidth = 1;
+
+  // 計測
+  const st = coreStats();
+  if (st) {
+    const sig = st.sigma * 100;
+    RV.$('#mK').textContent = kappa.toFixed(2);
+    RV.$('#mState').textContent = PHASES[st.phase];
+    RV.$('#mSigma').textContent = sig.toFixed(1) + '%';
+    RV.$('#mSigma').style.color = sig < 1 ? 'var(--rigid)' : sig < 8 ? 'var(--warn)' : 'var(--bad)';
+    RV.$('#mDof').textContent = st.phase === 0 ? '3' : String(2 * st.n);
+    RV.$('#mGoal').textContent = (st.goal * 100).toFixed(0) + '%';
+    RV.$('#mN').textContent = `${n} / ${renderMeta && kernel ? 'gpu.js:' + gpuMode : '点'}`;
+    if (st.phase > 0 && sig > 5 && simT - lastSigmaLog > 4) {
+      lastSigmaLog = simT;
+      log.add(`σ=${sig.toFixed(1)}%：2点間距離が変わった＝剛体の定義が破れた`, [4], { t: simT });
+    }
+  }
+  kBadge.set(kappa);
+  const pc = phaseOf(kappa, CASTLE_TH), pk = phaseOf(kappa, CORE_TH);
+  RV.$('#phCastle').querySelectorAll('span').forEach((s, i) => s.className = i < pc ? 'done' : i === pc ? 'on' : '');
+  RV.$('#phCore').querySelectorAll('span').forEach((s, i) => s.className = i < pk ? 'done' : i === pk ? 'on' : '');
+}
+
+// ---------- 起動 ----------
+const base = 'https://cdn.jsdelivr.net/npm/liquidfun-wasm@7.0.0/dist/es/';
+try {
+  B = await Box2DFactory({ locateFile: (p) => base + p });
+  RV.libOk('LiquidFun');
+} catch (e) {
+  RV.libOk('LiquidFun', false);
+  RV.modal('読み込み失敗', '<p>LiquidFun (WASM) を読み込めませんでした。ネットワークを確認して再読み込みしてください。</p>');
+  throw e;
+}
+setupGPU();
+RV.fitCanvas(cv, resize);
+reset(false);
+RV.loop(step, render, 1 / 60);
+RV.modal('終章　剛体ゼロ', `
+  <p>剛体――<b>どの2点の距離も変わらない物体</b>（§3.1）――が、世界から消えつつある。</p>
+  <p>この世界の物はすべて粒子でできている。いまはまだ LiquidFun の「剛体拘束」で形を保っているが、剛性 κ が下がるにつれ
+  <b>剛体 → 弾性体 → ばね → 粘性流体 → 水</b> と融けていく。城が先に融け、最後に水色のコアが融ける。</p>
+  <p>あなたにできるのは<b>重力の向きを回す</b>ことだけ（原理10：重力は場の力として全粒子に一様に働く）。
+  コアが剛体のうちは、どこを押されても全体が一斉に動く（原理4：透過伝達性）。融けたあとは、押された所から順にしか動かない。</p>
+  <p><b>目的:</b> κ=0 になる前にコアを右下のゴール槽へ。</p>`,
+  [{ label: '開始', primary: true, onClick: () => { started = true; } }]);
+</script>
+</body>
+</html>

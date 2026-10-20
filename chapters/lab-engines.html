@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>エンジン総当たり</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../shared/common.css">
+<script src="../shared/common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/planck@1.0.0/dist/planck.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/oimo/1.0.9/oimo.min.js"></script>
+<style>
+  .eng-list { font-size: 12px; margin: 0; padding-left: 16px; }
+  .eng-list li { margin: 3px 0; }
+  .eng-list b { color: var(--fg); }
+  .res { font-family: var(--mono); font-size: 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+  .res .ok { color: var(--good); } .res .ng { color: var(--bad); }
+</style>
+</head>
+<body>
+<main class="rv-main">
+  <div class="rv-stage" id="stage"><canvas id="cv"></canvas></div>
+  <aside class="rv-side">
+    <div class="panel mission">
+      <h2>ミッション（実験室）</h2>
+      <p>6 つの物理エンジンで同じ塔（箱6段）を立てる。剛性 κ を下げながら「試験」をくり返し、<b>それぞれのエンジンが塔を支えきれなくなる κ の境目</b>を測定せよ。</p>
+      <p class="note">試験＝5 秒シミュレーションして高さが初期の 85% 以上なら合格。<br>★1: κ&lt;1 で全エンジン合格を確認　★2: 全エンジン合格の最小 κ の境目（合格 κ と 0.05 下の不合格）を確定　★3: 6 エンジンそれぞれの境目を確定</p>
+    </div>
+    <div class="panel">
+      <h2>剛性 κ</h2>
+      <div class="row"><label>κ</label><input type="range" id="kappa" min="0.05" max="1" step="0.05" value="1"><span class="val" id="kVal">1.00 剛体</span></div>
+      <p class="note">κ=1：各エンジン本来の剛体（箱）。κ&lt;1：箱を角の小粒子（回転しない質点。2D:4個、3D:8個）と、対角を含むばねの網で置き換える。ばねの固有振動数 f = 2 + 28κ [Hz]、減衰比 ζ = 0.3。</p>
+      <div class="btns">
+        <button class="btn primary" id="trial">試験（5秒）</button>
+        <button class="btn" id="shoot">球を撃つ</button>
+        <button class="btn" id="reset">リセット</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>計測</h2>
+      <div class="meters">
+        <div class="meter"><div class="k">全合格の最小 κ</div><div class="v" id="mBest">—</div></div>
+        <div class="meter"><div class="k">シミュ時間</div><div class="v" id="mT">0.00 s</div></div>
+      </div>
+      <div class="res" id="results" style="margin-top:8px"></div>
+      <div class="note" style="margin-top:8px">各エンジンの境目（合格した最小 κ）</div>
+      <div class="res" id="limits"></div>
+    </div>
+    <div class="panel">
+      <h2>因果ログ</h2>
+      <div class="causal" id="causal"></div>
+    </div>
+    <div class="panel">
+      <h2>各エンジンの「剛体観」</h2>
+      <ul class="eng-list">
+        <li><b>Matter.js</b> — 剛体は凸多角形。位置補正型の反復ソルバ。拘束の stiffness は「1ステップで誤差の何割を戻すか」なので、ばねは k·Δt²/m に換算して与える。</li>
+        <li><b>Planck.js</b>（Box2D 移植）— 逐次インパルス法。距離ジョイントに frequencyHz・dampingRatio を与えると「柔らかい拘束」になる。</li>
+        <li><b>p2.js</b> — Gauss-Seidel ソルバ＋SPOOK 安定化。剛体拘束そのものに ε（柔らかさ）があり、LinearSpring は力として加算。</li>
+        <li><b>Rapier</b>（Rust→WASM）— 速度ベース PGS／ソフト拘束。spring ジョイントは剛性 k [N/m] と減衰 c をそのまま持つ。</li>
+        <li><b>toxiclibs.js</b> — 剛体という概念がない。Verlet 粒子と距離拘束の反復緩和（Jakobsen 法）。「剛体」は強さ1のばね網を何度も解いた近似で、衝突も最小距離ばねで作る。</li>
+        <li><b>Oimo.js</b> — 3D。剛体は 6 自由度（§3.4）。κ&lt;1 では 8 粒子＋28 本の距離ジョイント（ばね付き）＝1箱あたり自由度 24。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h2>理論</h2>
+      <div class="formula">剛体の自由度（§3.4）
+  3D: 3+2+1 = 6　 2D 平面運動: 3（§3.7）
+粒子 N 個にばらすと 3N（2D は 2N）
+  塔6段: 剛体 6×3=18 ↔ 粒子 24×2=48（2D）
+                6×6=36 ↔ 粒子 48×3=144（3D）
+
+ばね:  k = m_p (2πf)²,  c = 2ζ√(k m_p)
+つりあい（3–1）ΣF_i = 0 が成り立つには
+下段のばねが上の重さ分だけ縮む: Δx ≈ ΣMg / k</div>
+    </div>
+    <div class="ref">参照: 小原「力学A 第3章 剛体」§3.2, 3.4, 3.7 ／ 溝口ら「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 ／ Matter.js 0.19.0, Planck.js 1.0.0, p2.js 0.7.1, Rapier2D 0.14.0, toxiclibsjs 0.3.3, Oimo.js 1.0.9</div>
+  </aside>
+</main>
+
+<script type="module">
+RV.header({ id: 'lab', chap: '実験室', title: 'エンジン総当たり', libs: ['Matter.js', 'Planck.js', 'p2.js', 'Rapier2D', 'toxiclibs.js', 'Oimo.js', 'Tone.js'] });
+if (window.Tone) RV.libOk('Tone.js');
+const stage = RV.$('#stage'), cv = RV.$('#cv'), ctx = cv.getContext('2d');
+const log = RV.causal('#causal');
+
+// ---------- 共通シーン（SI 単位, y 上向き） ----------
+const DT = 1 / 60, G = 9.8;
+const HB = 0.25;                 // 箱の半辺
+const NB = 6;                    // 段数
+const PR = 0.1, PO = 0.15;       // 角粒子（小さな正方形）の半辺とオフセット。丸い粒子は積むと横に転がり入れ子になるので平らな面を持たせる
+const BOX_M2 = 0.25;             // 2D 箱の質量（密度1）
+const BOX_M3 = 0.125;            // 3D 箱の質量
+const BALL = { r: 0.25, x: -4, y: 1.2, vx: 8, vy: 1, density: 5 };
+const H0 = NB * 2 * HB;
+const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+const FRICTION = 0.6;
+const springParams = (k, mp) => {
+  const f = 2 + 28 * k, zeta = 0.3;
+  const K = mp * (2 * Math.PI * f) ** 2;
+  return { f, zeta, K, C: 2 * zeta * Math.sqrt(K * mp) };
+};
+const boxY = i => HB + i * 2 * HB;
+const pairsOf = n => { const p = []; for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) p.push([a, b]); return p; };
+
+// 各エンジンは { name, solver, init(kappa), step(), shoot(), shapes(): {polys:[[x,y]...], parts:[[x,y,r]], ball:[x,y,r]|null}, dof(), height() }
+const engines = [];
+
+// ---------- Matter.js ----------
+function matterEngine() {
+  const M = Matter, S = 100;        // 1 m = 100 px, Matter は y 下向き
+  let eng, boxes, ball, soft;
+  return {
+    name: 'Matter.js', solver: '位置補正・反復', lib: 'Matter.js',
+    init(kappa) {
+      eng = M.Engine.create(); eng.gravity.y = 0.98; // 0.98 × 0.001 × 100² ≒ 9.8 m/s²
+      eng.positionIterations = 10; eng.velocityIterations = 8; eng.constraintIterations = 20;
+      const ground = M.Bodies.rectangle(0, 50, 4000, 100, { isStatic: true, friction: FRICTION });
+      M.Composite.add(eng.world, ground);
+      soft = kappa < 1; boxes = []; ball = null;
+      for (let i = 0; i < NB; i++) {
+        if (!soft) {
+          const b = M.Bodies.rectangle(0, -boxY(i) * S, 2 * HB * S, 2 * HB * S, { friction: FRICTION, density: 0.001 });
+          boxes.push(b); M.Composite.add(eng.world, b);
+        } else {
+          const ps = CORNERS.map(([sx, sy]) => M.Bodies.rectangle(sx * PO * S, -(boxY(i) + sy * PO) * S, 2 * PR * S, 2 * PR * S, { friction: FRICTION, collisionFilter: { group: -(i + 1) }, density: 0.001 * (2 * HB) ** 2 / 4 / (2 * PR) ** 2 }));
+          const sp = springParams(kappa, BOX_M2 / 4);
+          const stiff = Math.min(1, sp.K * (DT / 4) ** 2 / (BOX_M2 / 4));
+          const cs = pairsOf(4).map(([a, b]) => M.Constraint.create({ bodyA: ps[a], bodyB: ps[b], stiffness: stiff, damping: 0.1 }));
+          ps.forEach(q => M.Body.setInertia(q, Infinity));   // 粒子は転がらない（ころ軸受けにならないように）
+          M.Composite.add(eng.world, [...ps, ...cs]);
+          boxes.push(ps);
+        }
+      }
+    },
+    step() { for (let k = 0; k < 4; k++) M.Engine.update(eng, DT * 1000 / 4); },   // 4 分割しないとばね網の塔が沈み込む
+    shoot() {
+      ball = M.Bodies.circle(BALL.x * S, -BALL.y * S, BALL.r * S, { density: 0.001 * BALL.density, friction: FRICTION });
+      M.Composite.add(eng.world, ball);
+      M.Body.setVelocity(ball, { x: BALL.vx * S * DT, y: -BALL.vy * S * DT });
+    },
+    shapes() {
+      const out = { polys: [], parts: [], ball: ball ? [ball.position.x / S, -ball.position.y / S, BALL.r] : null };
+      for (const b of boxes) {
+        if (!soft) out.polys.push(b.vertices.map(v => [v.x / S, -v.y / S]));
+        else { out.polys.push(expand(b.map(p => [p.position.x / S, -p.position.y / S]), HB / PO)); b.forEach(p => out.parts.push([p.position.x / S, -p.position.y / S, PR])); }
+      }
+      return out;
+    },
+    dof() { return soft ? 2 * 4 * NB : 3 * NB; }
+  };
+}
+
+// ---------- Planck.js ----------
+function planckEngine() {
+  const P = planck, V = planck.Vec2;
+  let world, boxes, ball, soft;
+  return {
+    name: 'Planck.js', solver: '逐次インパルス (Box2D)', lib: 'Planck.js',
+    init(kappa) {
+      world = new P.World({ gravity: V(0, -G) });
+      world.createBody().createFixture(P.Edge(V(-30, 0), V(30, 0)), { friction: FRICTION });
+      soft = kappa < 1; boxes = []; ball = null;
+      for (let i = 0; i < NB; i++) {
+        if (!soft) {
+          const b = world.createDynamicBody({ position: V(0, boxY(i)) });
+          b.createFixture(P.Box(HB, HB), { density: 1, friction: FRICTION });
+          boxes.push(b);
+        } else {
+          const mp = BOX_M2 / 4, sp = springParams(kappa, mp);
+          const ps = CORNERS.map(([sx, sy]) => {
+            const b = world.createDynamicBody({ position: V(sx * PO, boxY(i) + sy * PO), fixedRotation: true });
+            b.createFixture(P.Box(PR, PR), { density: mp / (4 * PR * PR), friction: FRICTION, filterGroupIndex: -(i + 1) });
+            return b;
+          });
+          for (const [a, c] of pairsOf(4)) world.createJoint(P.DistanceJoint({ frequencyHz: sp.f, dampingRatio: sp.zeta }, ps[a], ps[c], ps[a].getPosition(), ps[c].getPosition()));
+          boxes.push(ps);
+        }
+      }
+    },
+    step() { world.step(DT, 8, 3); },
+    shoot() {
+      ball = world.createDynamicBody({ position: V(BALL.x, BALL.y), bullet: true });
+      ball.createFixture(P.Circle(BALL.r), { density: BALL.density, friction: FRICTION });
+      ball.setLinearVelocity(V(BALL.vx, BALL.vy));
+    },
+    shapes() {
+      const out = { polys: [], parts: [], ball: ball ? [ball.getPosition().x, ball.getPosition().y, BALL.r] : null };
+      for (const b of boxes) {
+        if (!soft) {
+          const p = b.getPosition(), a = b.getAngle(), c = Math.cos(a), s = Math.sin(a);
+          out.polys.push(CORNERS.map(([sx, sy]) => [p.x + c * sx * HB - s * sy * HB, p.y + s * sx * HB + c * sy * HB]));
+        } else {
+          out.polys.push(expand(b.map(q => [q.getPosition().x, q.getPosition().y]), HB / PO));
+          b.forEach(q => out.parts.push([q.getPosition().x, q.getPosition().y, PR]));
+        }
+      }
+      return out;
+    },
+    dof() { return soft ? 2 * 4 * NB : 3 * NB; }
+  };
+}
+
+// ---------- p2.js ----------
+function p2Engine() {
+  let world, boxes, ball, soft, sub = 4;
+  return {
+    name: 'p2.js', solver: 'Gauss-Seidel + SPOOK', lib: 'p2.js',
+    init(kappa) {
+      world = new p2.World({ gravity: [0, -G] });
+      world.defaultContactMaterial.friction = FRICTION;
+      world.solver.iterations = 20;
+      sub = kappa < 1 ? Math.max(4, Math.ceil(springParams(kappa, 1).f / 3)) : 1;
+      const ground = new p2.Body({ mass: 0 }); ground.addShape(new p2.Plane()); world.addBody(ground);
+      soft = kappa < 1; boxes = []; ball = null;
+      for (let i = 0; i < NB; i++) {
+        if (!soft) {
+          const b = new p2.Body({ mass: BOX_M2, position: [0, boxY(i)] });
+          b.addShape(new p2.Box({ width: 2 * HB, height: 2 * HB })); world.addBody(b); boxes.push(b);
+        } else {
+          const mp = BOX_M2 / 4, sp = springParams(kappa, mp);
+          const ps = CORNERS.map(([sx, sy]) => { const b = new p2.Body({ mass: mp, position: [sx * PO, boxY(i) + sy * PO], fixedRotation: true }); b.addShape(new p2.Box({ width: 2 * PR, height: 2 * PR })); world.addBody(b); return b; });
+          for (const [a, c] of pairsOf(4)) {
+            world.disableBodyCollision(ps[a], ps[c]);
+            const L = Math.hypot(ps[a].position[0] - ps[c].position[0], ps[a].position[1] - ps[c].position[1]);
+            world.addSpring(new p2.LinearSpring(ps[a], ps[c], { stiffness: sp.K, damping: sp.C, restLength: L }));
+          }
+          boxes.push(ps);
+        }
+      }
+    },
+    step() { for (let k = 0; k < sub; k++) world.step(DT / sub); },   // ばね力は陽的に積分されるので、固い（f が大きい）ほど刻みを細かく
+    shoot() {
+      ball = new p2.Body({ mass: BALL.density * Math.PI * BALL.r ** 2, position: [BALL.x, BALL.y], velocity: [BALL.vx, BALL.vy] });
+      ball.addShape(new p2.Circle({ radius: BALL.r })); world.addBody(ball);
+    },
+    shapes() {
+      const out = { polys: [], parts: [], ball: ball ? [ball.position[0], ball.position[1], BALL.r] : null };
+      for (const b of boxes) {
+        if (!soft) {
+          const [x, y] = b.position, a = b.angle, c = Math.cos(a), s = Math.sin(a);
+          out.polys.push(CORNERS.map(([sx, sy]) => [x + c * sx * HB - s * sy * HB, y + s * sx * HB + c * sy * HB]));
+        } else {
+          out.polys.push(expand(b.map(q => [q.position[0], q.position[1]]), HB / PO));
+          b.forEach(q => out.parts.push([q.position[0], q.position[1], PR]));
+        }
+      }
+      return out;
+    },
+    dof() { return soft ? 2 * 4 * NB : 3 * NB; }
+  };
+}
+
+// ---------- Rapier2D ----------
+function rapierEngine(R) {
+  let world, boxes, ball, soft;
+  return {
+    name: 'Rapier2D', solver: 'PGS ソフト拘束 (WASM)', lib: 'Rapier2D',
+    init(kappa) {
+      if (world) world.free();
+      world = new R.World({ x: 0, y: -G });
+      world.timestep = DT;
+      const g = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -0.5));
+      world.createCollider(R.ColliderDesc.cuboid(30, 0.5).setFriction(FRICTION), g);
+      soft = kappa < 1; boxes = []; ball = null;
+      for (let i = 0; i < NB; i++) {
+        if (!soft) {
+          const b = world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(0, boxY(i)));
+          world.createCollider(R.ColliderDesc.cuboid(HB, HB).setDensity(1).setFriction(FRICTION), b);
+          boxes.push(b);
+        } else {
+          const mp = BOX_M2 / 4, sp = springParams(kappa, mp);
+          const ps = CORNERS.map(([sx, sy]) => {
+            const b = world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(sx * PO, boxY(i) + sy * PO).lockRotations());
+            world.createCollider(R.ColliderDesc.cuboid(PR, PR).setDensity(mp / (4 * PR * PR)).setFriction(FRICTION), b);
+            return b;
+          });
+          for (const [a, c] of pairsOf(4)) {
+            const pa = ps[a].translation(), pc = ps[c].translation();
+            const L = Math.hypot(pa.x - pc.x, pa.y - pc.y);
+            const j = world.createImpulseJoint(R.JointData.spring(L, sp.K, sp.C, { x: 0, y: 0 }, { x: 0, y: 0 }), ps[a], ps[c], true);
+            if (j.setContactsEnabled) j.setContactsEnabled(false);
+          }
+          boxes.push(ps);
+        }
+      }
+    },
+    step() { world.step(); },
+    shoot() {
+      ball = world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(BALL.x, BALL.y).setLinvel(BALL.vx, BALL.vy).setCcdEnabled(true));
+      world.createCollider(R.ColliderDesc.ball(BALL.r).setDensity(BALL.density).setFriction(FRICTION), ball);
+    },
+    shapes() {
+      const out = { polys: [], parts: [], ball: ball ? [ball.translation().x, ball.translation().y, BALL.r] : null };
+      for (const b of boxes) {
+        if (!soft) {
+          const p = b.translation(), a = b.rotation(), c = Math.cos(a), s = Math.sin(a);
+          out.polys.push(CORNERS.map(([sx, sy]) => [p.x + c * sx * HB - s * sy * HB, p.y + s * sx * HB + c * sy * HB]));
+        } else {
+          out.polys.push(expand(b.map(q => [q.translation().x, q.translation().y]), HB / PO));
+          b.forEach(q => out.parts.push([q.translation().x, q.translation().y, PR]));
+        }
+      }
+      return out;
+    },
+    dof() { return soft ? 2 * 4 * NB : 3 * NB; }
+  };
+}
+
+// ---------- toxiclibs.js（Verlet） ----------
+function toxiEngine(T) {
+  const { VerletPhysics2D, VerletParticle2D, VerletSpring2D, VerletMinDistanceSpring2D, Vec2D } = T;
+  const ITER = 10, SUB = 4, DS = DT / SUB;
+  // 粒子は大きめに重ねて表面の凹凸を減らす（点の積み重ねは横にずれて入れ子になりやすい）
+  const TR = 0.15, GRID = [-0.1, 0, 0.1];   // 1箱 = 3×3 粒子（重なった円で表面を平らに近づける）
+  let phys, boxes, ball, all, kap;
+  // 重力: toxiclibs の GravityBehavior は weight 倍されるので、粒子ごとに 1/weight を掛けて一様にする
+  const gravity = { configure() { }, applyBehavior(p) { p.addForce(new Vec2D(0, -G * DS * DS / p.weight)); } };
+  let contacts = [];
+  function addCollisions(p, others) {
+    for (const q of others) { const sp = new VerletMinDistanceSpring2D(p, q, p.r + q.r, 1); phys.springs.push(sp); contacts.push(sp); }
+  }
+  // 粒子どうしの摩擦（toxiclibs には無いので、接触中の相対接線速度を Verlet の prev で減らす）
+  function contactFriction() {
+    for (const c of contacts) {
+      const a = c.a, b = c.b, dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+      if (d > c.restLength * 1.02 || d < 1e-9) continue;
+      const nx = dx / d, ny = dy / d;
+      const rvx = (a.x - a.prev.x) - (b.x - b.prev.x), rvy = (a.y - a.prev.y) - (b.y - b.prev.y);
+      const vn = rvx * nx + rvy * ny, tx = rvx - vn * nx, ty = rvy - vn * ny;
+      const wa = a.invWeight / (a.invWeight + b.invWeight), wb = 1 - wa;
+      a.prev.x += tx * FRICTION * wa; a.prev.y += ty * FRICTION * wa;
+      b.prev.x -= tx * FRICTION * wb; b.prev.y -= ty * FRICTION * wb;
+    }
+  }
+  return {
+    name: 'toxiclibs.js', solver: 'Verlet + 反復緩和', lib: 'toxiclibs.js',
+    init(kappa) {
+      kap = kappa;
+      phys = new VerletPhysics2D(null, ITER, 0, 1);
+      phys.addBehavior(gravity);
+      boxes = []; ball = null; all = []; contacts = [];
+      // 剛体（κ=1）も「強さ1のばね網」でしか表せない
+      let strength = 1;
+      if (kappa < 1) {
+        const mp = BOX_M2 / 9, sp = springParams(kappa, mp);
+        const sStep = Math.min(1, sp.K * DS * DS / mp);
+        strength = sStep;   // Verlet のばねの「強さ」は 1 反復で誤差の何割を戻すか（反復回数に依存する＝物理定数ではない）
+      }
+      for (let i = 0; i < NB; i++) {
+        const ps = [];
+        for (const ox of GRID) for (const oy of GRID) { const p = new VerletParticle2D(new Vec2D(ox, boxY(i) + oy)); p.setWeight(1); p.r = TR; p.box = i; phys.addParticle(p); ps.push(p); }
+        for (const [a, c] of pairsOf(ps.length)) phys.springs.push(new VerletSpring2D(ps[a], ps[c], ps[a].distanceTo(ps[c]), strength));
+        for (const p of ps) addCollisions(p, all.filter(q => q.box !== i));
+        all.push(...ps);
+        boxes.push(ps);
+      }
+    },
+    step() {
+      // toxiclibs の update() は床などの拘束を最後の反復でしか適用しないため、
+      // 粒子の Verlet 積分だけ任せ、ばね（距離拘束）と床（原理7: 地面は動かない）は毎反復で交互に解く
+      for (let k = 0; k < SUB; k++) {
+        phys.updateParticles();
+        const sp = phys.springs, ps = phys.particles;
+        for (let it = 0; it < ITER; it++) {
+          for (let j = 0; j < sp.length; j++) sp[j].update(false);
+          for (let j = 0; j < ps.length; j++) { const p = ps[j]; if (p.y < p.r) p.y = p.r; }
+        }
+        // 粒子間摩擦は入れない（反復緩和と組み合わせると横向きの偏りを生み、塔が流れる）
+        for (const p of ps) {
+          if (p.y <= p.r + 1e-4) { p.prev.x += (p.x - p.prev.x) * FRICTION; if (p.prev.y < p.y) p.prev.y = p.y; }
+        }
+      }
+    },
+    shoot() {
+      ball = new VerletParticle2D(new Vec2D(BALL.x, BALL.y)); ball.setWeight(36); ball.r = BALL.r; ball.box = -1;
+      ball.prev.set(new Vec2D(BALL.x - BALL.vx * DS, BALL.y - BALL.vy * DS));
+      phys.addParticle(ball); addCollisions(ball, all);
+    },
+    shapes() {
+      const out = { polys: [], parts: [], ball: ball ? [ball.x, ball.y, BALL.r] : null };
+      for (const b of boxes) { out.polys.push(expand([b[0], b[6], b[8], b[2]].map(p => [p.x, p.y]), HB / 0.1)); b.forEach(p => out.parts.push([p.x, p.y, TR])); }
+      return out;
+    },
+    dof() { return 2 * 9 * NB; },
+    dofNote: '剛体概念なし'
+  };
+}
+
+// ---------- Oimo.js（3D） ----------
+function oimoEngine() {
+  let world, boxes, ball, soft;
+  const C8 = []; for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) C8.push([x, y, z]);
+  const rot = (q, v) => { // クォータニオンでベクトルを回す
+    const [x, y, z] = v, { x: qx, y: qy, z: qz, w: qw } = q;
+    const ix = qw * x + qy * z - qz * y, iy = qw * y + qz * x - qx * z, iz = qw * z + qx * y - qy * x, iw = -qx * x - qy * y - qz * z;
+    return [ix * qw + iw * -qx + iy * -qz - iz * -qy, iy * qw + iw * -qy + iz * -qx - ix * -qz, iz * qw + iw * -qz + ix * -qy - iy * -qx];
+  };
+  return {
+    name: 'Oimo.js（3D）', solver: '3D 剛体 6自由度', lib: 'Oimo.js', is3D: true,
+    init(kappa) {
+      if (world) world.clear();
+      world = new OIMO.World({ timestep: DT, iterations: 10, broadphase: 2, worldscale: 1, random: false, info: false, gravity: [0, -G, 0] });
+      world.add({ type: 'box', size: [40, 1, 40], pos: [0, -0.5, 0], move: false, friction: FRICTION });
+      soft = kappa < 1; boxes = []; ball = null;
+      for (let i = 0; i < NB; i++) {
+        if (!soft) {
+          boxes.push(world.add({ type: 'box', size: [2 * HB, 2 * HB, 2 * HB], pos: [0, boxY(i), 0], move: true, density: 1, friction: FRICTION, restitution: 0.05 }));
+        } else {
+          const mp = BOX_M3 / 8, sp = springParams(kappa, mp);
+          const ps = C8.map(([x, y, z]) => world.add({ type: 'box', size: [2 * PR, 2 * PR, 2 * PR], pos: [x * PO, boxY(i) + y * PO, z * PO], move: true, density: mp / (2 * PR) ** 3, friction: FRICTION, restitution: 0.05 }));
+          ps.forEach(q => q.inverseLocalInertia.set(0, 0, 0, 0, 0, 0, 0, 0, 0));   // 粒子は回転しない
+          for (const [a, c] of pairsOf(8)) {
+            const L = Math.hypot(...[0, 1, 2].map(k => (C8[a][k] - C8[c][k]) * PO));
+            world.add({ type: 'jointDistance', body1: ps[a], body2: ps[c], pos1: [0, 0, 0], pos2: [0, 0, 0], min: L, max: L, spring: [sp.f, sp.zeta], collision: false });
+          }
+          boxes.push(ps);
+        }
+      }
+    },
+    step() { world.step(); },
+    shoot() {
+      ball = world.add({ type: 'sphere', size: [BALL.r], pos: [BALL.x, BALL.y, 0], move: true, density: BALL.density, friction: FRICTION });
+      ball.linearVelocity.set(BALL.vx, BALL.vy, 0);
+    },
+    shapes() {
+      const P = ([x, y, z]) => [x + 0.35 * z, y + 0.22 * z];      // 斜投影
+      const out = { polys: [], parts: [], ball: ball ? [ball.pos.x + 0.35 * ball.pos.z, ball.pos.y + 0.22 * ball.pos.z, BALL.r] : null };
+      for (const b of boxes) {
+        let pts;
+        if (!soft) { const p = b.pos, q = b.quaternion; pts = C8.map(c => { const v = rot(q, c.map(k => k * HB)); return [p.x + v[0], p.y + v[1], p.z + v[2]]; }); }
+        else { pts = b.map(s => [s.pos.x, s.pos.y, s.pos.z]); pts.forEach(p => out.parts.push([...P(p), PR])); pts = expand(pts, HB / PO); }
+        out.polys.push(hull(pts.map(P)));
+      }
+      return out;
+    },
+    dof() { return soft ? 3 * 8 * NB : 6 * NB; }
+  };
+}
+// 粒子中心の多角形を重心から f 倍に広げて、箱の外形として描く（2D/3D 共通）
+function expand(pts, f) {
+  const d = pts[0].length, c = new Array(d).fill(0);
+  for (const p of pts) for (let k = 0; k < d; k++) c[k] += p[k] / pts.length;
+  return pts.map(p => p.map((v, k) => c[k] + (v - c[k]) * f));
+}
+function hull(pts) { // 2D 凸包（Andrew）
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+
+// ---------- 読み込み ----------
+const failed = {};
+function tryAdd(lib, make) {
+  try { const e = make(); engines.push(e); RV.libOk(lib); }
+  catch (err) { console.error(lib, err); RV.libOk(lib, false); failed[lib] = String(err); }
+}
+tryAdd('Matter.js', () => { if (!window.Matter) throw new Error('未読込'); return matterEngine(); });
+tryAdd('Planck.js', () => { if (!window.planck) throw new Error('未読込'); return planckEngine(); });
+tryAdd('p2.js', () => { if (!window.p2) throw new Error('未読込'); return p2Engine(); });
+try {
+  const R = (await import('https://cdn.jsdelivr.net/npm/@dimforge/rapier2d-compat@0.14.0/rapier.es.js')).default;
+  await R.init();
+  tryAdd('Rapier2D', () => rapierEngine(R));
+} catch (e) { console.error(e); RV.libOk('Rapier2D', false); }
+try {
+  const [phy, v] = await Promise.all([
+    import('https://cdn.jsdelivr.net/npm/toxiclibsjs@0.3.3/physics2d/+esm'),
+    import('https://cdn.jsdelivr.net/npm/toxiclibsjs@0.3.3/geom/Vec2D/+esm')
+  ]);
+  const P = phy.VerletPhysics2D ? phy : phy.default;
+  const Vec2D = v.default || v.Vec2D || v;
+  tryAdd('toxiclibs.js', () => toxiEngine({ ...P, Vec2D }));
+} catch (e) { console.error(e); RV.libOk('toxiclibs.js', false); }
+tryAdd('Oimo.js', () => { if (!window.OIMO) throw new Error('未読込'); return oimoEngine(); });
+
+// ---------- 状態 ----------
+let kappa = 1, simT = 0, trial = null, shot = false;
+const stats = engines.map(() => ({ ms: 0, h: 1, err: null }));
+
+function heightOf(sh) {
+  let m = 0;
+  for (const poly of sh.polys) for (const [, y] of poly) m = Math.max(m, y);
+  if (sh.parts.length) for (const [, y, r] of sh.parts) m = Math.max(m, y + r);
+  return m / H0;
+}
+
+function resetAll() {
+  simT = 0; shot = false;
+  engines.forEach((e, i) => {
+    try { e.init(kappa); stats[i].err = null; } catch (err) { console.error(e.name, err); stats[i].err = String(err.message || err); }
+    stats[i].ms = 0;
+  });
+}
+
+function shootAll() {
+  if (shot) return;
+  shot = true;
+  engines.forEach((e, i) => { try { e.shoot(); } catch (err) { stats[i].err = String(err.message || err); } });
+  RV.sfx.thud(0.8);
+  log.add('球を発射：球が塔の下段を押す（作用）', [3], { t: simT });
+  if (kappa >= 1) log.add('剛体の塔：押された箱は全体が同時に動き出す', [4, 1], { arrow: true, t: simT });
+  else log.add('粒子の塔：接触した粒子から動き、ばねの伸縮で順に伝わる', [3, 5], { arrow: true, t: simT });
+}
+
+function step() {
+  simT += DT;
+  engines.forEach((e, i) => {
+    if (stats[i].err) return;
+    const t0 = performance.now();
+    try { e.step(); } catch (err) { stats[i].err = String(err.message || err); console.error(e.name, err); }
+    stats[i].ms = stats[i].ms * 0.9 + (performance.now() - t0) * 0.1;
+  });
+  if (trial && simT >= 5) finishTrial();
+}
+
+// 試験記録: tested[κ×100] = [各エンジンの合否]
+const tested = {};
+const key = k => Math.round(k * 100);
+function analyze() {
+  const ks = Object.keys(tested).map(Number).sort((a, b) => a - b);
+  const perEngine = engines.map((e, i) => {
+    const pass = ks.filter(k => tested[k][i]);
+    if (!pass.length) return { name: e.name, limit: null, known: false };
+    const L = pass[0];
+    return { name: e.name, limit: L / 100, known: L <= 5 || tested[L - 5] !== undefined };
+  });
+  const allPass = ks.filter(k => tested[k].every(Boolean));
+  const A = allPass.length ? allPass[0] : null;
+  const allKnown = A !== null && (A <= 5 || tested[A - 5] !== undefined);
+  let stars = 0;
+  if (allPass.some(k => k < 100)) stars = 1;
+  if (stars && allKnown && A < 100) stars = 2;
+  if (stars === 2 && perEngine.every(p => p.known)) stars = 3;
+  return { perEngine, A, allKnown, stars };
+}
+
+function finishTrial() {
+  const k = trial.kappa; trial = null;
+  const rows = engines.map((e, i) => {
+    const h = stats[i].err ? 0 : heightOf(e.shapes());
+    return { name: e.name, h, ok: h >= 0.85 };
+  });
+  tested[key(k)] = rows.map(r => r.ok);
+  const allOk = rows.every(r => r.ok);
+  RV.$('#results').innerHTML = `<span>κ=${k.toFixed(2)} の試験</span><span></span>` + rows.map(r => `<span>${r.name}</span><span class="${r.ok ? 'ok' : 'ng'}">${(r.h * 100).toFixed(0)}% ${r.ok ? '合格' : '崩壊'}</span>`).join('');
+  rows.forEach(r => { if (!r.ok) log.add(`${r.name}: 下段のばねが上の重さを支えきれず縮んだ（反作用を返す根拠＝「動かない」が失われた）`, [5, 6], { t: simT }); });
+  if (allOk) log.add(`κ=${k.toFixed(2)}：全エンジンで塔が立った（ΣF=0 のつりあい (3–1)）`, [2, 9], { t: simT, force: true });
+  const an = analyze();
+  RV.$('#mBest').textContent = an.A === null ? '—' : (an.A / 100).toFixed(2) + (an.allKnown ? ' 確定' : ' ?');
+  RV.$('#limits').innerHTML = an.perEngine.map(p => `<span>${p.name}</span><span class="${p.known ? 'ok' : ''}">${p.limit === null ? '—' : p.limit.toFixed(2)}${p.limit === null ? '' : p.known ? ' 確定' : ' ?'}</span>`).join('');
+  const before = RV.loadProgress().lab || 0;
+  if (an.stars > before) {
+    RV.saveStars('lab', an.stars);
+    RV.sfx.win();
+    const msg = [
+      '',
+      'κ&lt;1 でも、ばねが十分に固ければ塔は立つ。つりあい ΣF=0（3–1）は、下段のばねが「縮んだ分だけ押し返す」ことで実現している（原理5）。',
+      '全エンジンが耐えられる境目が決まった。いちばん先に崩れるエンジンが全体の境目を決めている。',
+      '6 エンジンすべての境目が決まった。同じ κ（同じばねの固有振動数）でも、拘束の解き方の違いで「どこまで剛体のふりができるか」が変わる。'][an.stars];
+    RV.modal(`実験室　★${an.stars}`, `<p>評価 <span class="stars">${'★'.repeat(an.stars)}${'☆'.repeat(3 - an.stars)}</span></p><p>${msg}</p>`);
+  } else allOk ? RV.sfx.tone(660) : RV.sfx.fail();
+}
+
+window.__lab = { engines, stats, tested, analyze, get simT() { return simT; }, heightOf, setKappa(v) { RV.$('#kappa').value = v; RV.$('#kappa').dispatchEvent(new Event('input')); }, runTrial() { RV.$('#trial').click(); }, get trial() { return trial; } };
+
+// ---------- UI ----------
+RV.$('#kappa').addEventListener('input', e => {
+  kappa = +e.target.value;
+  RV.$('#kVal').textContent = kappa.toFixed(2) + (kappa >= 1 ? ' 剛体' : '');
+  resetAll();
+  log.add(kappa >= 1 ? 'κ=1：各エンジンの剛体（2点間距離が不変）' : `κ=${kappa.toFixed(2)}：箱を粒子＋ばね網に置換（f=${springParams(kappa, 1).f.toFixed(1)} Hz）`, kappa >= 1 ? [4] : [], { t: 0 });
+});
+RV.$('#reset').onclick = () => resetAll();
+RV.$('#shoot').onclick = () => { if (trial) return; if (shot) resetAll(); shootAll(); };
+RV.$('#trial').onclick = () => { resetAll(); trial = { kappa }; RV.$('#results').innerHTML = `<span>κ=${kappa.toFixed(2)} 試験中…</span><span></span>`; };
+
+// ---------- 描画 ----------
+let W = 800, Hh = 500;
+const VIEW = { x0: -4.6, x1: 2.2, y0: -0.25, y1: 3.75 };
+RV.fitCanvas(cv, (w, h, dpr) => { W = w; Hh = h; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); });
+function render() {
+  ctx.fillStyle = '#0a0d10'; ctx.fillRect(0, 0, W, Hh);
+  const cols = W < 640 ? 2 : 3, rows = Math.ceil(engines.length / cols);
+  const pw = W / cols, ph = Hh / rows;
+  engines.forEach((e, i) => {
+    const ox = (i % cols) * pw, oy = Math.floor(i / cols) * ph;
+    const s = Math.min((pw - 16) / (VIEW.x1 - VIEW.x0), (ph - 52) / (VIEW.y1 - VIEW.y0));
+    const X = x => ox + 8 + (x - VIEW.x0) * s, Y = y => oy + ph - 8 - (y - VIEW.y0) * s;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ox + 1, oy + 1, pw - 2, ph - 2); ctx.clip();
+    ctx.fillStyle = '#10151b'; ctx.fillRect(ox + 1, oy + 1, pw - 2, ph - 2);
+    // 地面
+    ctx.fillStyle = '#39424e'; ctx.fillRect(ox, Y(0), pw, Hh);
+    // 初期高さの 85% ライン
+    ctx.strokeStyle = 'rgba(255,209,102,.35)'; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(X(-1.2), Y(H0 * 0.85)); ctx.lineTo(X(1.2), Y(H0 * 0.85)); ctx.stroke(); ctx.setLineDash([]);
+    let h = 0;
+    if (stats[i].err) {
+      ctx.fillStyle = '#ff5d73'; ctx.font = '12px sans-serif'; ctx.fillText('エラー: ' + stats[i].err.slice(0, 60), ox + 10, oy + 44);
+    } else {
+      const sh = e.shapes();
+      h = heightOf(sh);
+      const soft = kappa < 1 || e.lib === 'toxiclibs.js';
+      sh.polys.forEach((poly, k) => {
+        ctx.beginPath(); poly.forEach(([x, y], j) => j ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); ctx.closePath();
+        ctx.fillStyle = kappa >= 1 ? `hsla(${200 + k * 4},70%,${45 + k * 3}%,.85)` : `hsla(${20 + k * 5},80%,${50 + k * 2}%,.55)`;
+        ctx.fill();
+        ctx.strokeStyle = kappa >= 1 ? '#a8e3ff' : '#ffb38a'; ctx.lineWidth = 1; ctx.stroke();
+      });
+      if (soft) { ctx.fillStyle = '#ffe2cf'; for (const [x, y] of sh.parts) { ctx.beginPath(); ctx.arc(X(x), Y(y), 2.2, 0, 7); ctx.fill(); } }
+      if (sh.ball) { ctx.fillStyle = '#ffd166'; ctx.beginPath(); ctx.arc(X(sh.ball[0]), Y(sh.ball[1]), sh.ball[2] * s, 0, 7); ctx.fill(); }
+    }
+    // ラベル
+    ctx.fillStyle = '#e6ebf1'; ctx.font = 'bold 13px sans-serif'; ctx.fillText(e.name, ox + 10, oy + 18);
+    ctx.fillStyle = '#8d9aab'; ctx.font = '11px sans-serif'; ctx.fillText(e.solver, ox + 10, oy + 33);
+    ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'right';
+    const dof = e.dof();
+    ctx.fillStyle = h >= 0.85 ? '#6fdc8c' : '#ff5d73';
+    ctx.fillText(`高さ ${(h * 100).toFixed(0)}%`, ox + pw - 10, oy + 18);
+    ctx.fillStyle = '#8d9aab';
+    ctx.fillText(`自由度 ${dof}${e.dofNote ? '（' + e.dofNote + '）' : ''}`, ox + pw - 10, oy + 32);
+    ctx.fillText(`${stats[i].ms.toFixed(2)} ms/step`, ox + pw - 10, oy + 46);
+    ctx.textAlign = 'left';
+    ctx.restore();
+    ctx.strokeStyle = '#2b3542'; ctx.strokeRect(ox + 0.5, oy + 0.5, pw - 1, ph - 1);
+  });
+  RV.$('#mT').textContent = simT.toFixed(2) + ' s' + (trial ? ' 試験中' : '');
+}
+
+resetAll();
+log.add('κ=1：各エンジンの剛体（2点間距離が不変）', [4], { t: 0 });
+RV.loop(step, render, DT);
+RV.modal('実験室　エンジン総当たり', `
+  <p>剛体が消えていく世界で、物理エンジンたちはそれぞれ違うやり方で「剛体」を作っている。ここでは <b>同じ塔</b> を 6 つのエンジンで同時に立てて比べる。</p>
+  <p>κ を下げると、箱は「角の粒子＋ばね」に置き換わる。剛体なら上の箱の重さは瞬時にそのまま地面へ伝わる（原理4）が、ばねの塔は<b>縮むことでしか</b>押し返せない（原理5）。</p>
+  <p><b>目的:</b> κ を変えて「試験」をくり返し、各エンジンが塔を支えきれなくなる κ の境目を測る（合格した κ と、その 0.05 下の不合格をそろえると「確定」）。「球を撃つ」で衝撃の伝わり方も比べてみよう。</p>
+  ${Object.keys(failed).length ? '<p style="color:var(--bad)">読み込めなかったエンジン: ' + Object.keys(failed).join(', ') + '</p>' : ''}`,
+  [{ label: '始める', primary: true }]);
+</script>
+</body>
+</html>
