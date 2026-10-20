@@ -44,17 +44,18 @@
   };
 
   // ---------- 因果ログ（溝口・平嶋・堀口 2016「力と運動に関する因果推論理論」） ----------
+  // 高校物理の言葉に言い換えた「力の伝わり方のルール」（番号は論文の原理番号）
   RV.PRINCIPLES = {
-    1: '加速・減速は F=mα',
-    2: '作用と反作用は等大・逆向き',
-    3: '値の増加は作用側からのみ（局所的因果性）',
-    4: '剛体は力を瞬時に伝える（透過伝達性）',
-    5: '反作用を返す根拠＝動かない or αで動く（大局的因果性）',
-    6: '押されても動かない＝背後の反作用か静止摩擦',
-    7: '地球・地面は絶対に動かない',
-    8: 'つぶれない壁・床は動かない',
-    9: '力は足し合わせられる',
-    10: '加速度系では −α の「場」が生じる'
+    1: '速さを変えるには力がいる（F = ma）',
+    2: '押したら同じ大きさで押し返される（作用・反作用）',
+    3: '押し返す力は、押す側が強めたときだけ強くなる',
+    4: 'かたい物は押した力を一瞬で反対側まで伝える',
+    5: '押し返せるのは「動かない」か「加速して動く」から',
+    6: '押しても動かないのは、後ろの物か摩擦が支えているから',
+    7: '地面（地球）は動かないものとして考える',
+    8: '壁や床はつぶれず動かない',
+    9: 'いくつかの力は足し算できる',
+    10: '加速する乗り物の中では、逆向きに引っぱられる力を感じる'
   };
   RV.causal = function (el) {
     const box = typeof el === 'string' ? $(el) : el;
@@ -70,7 +71,7 @@
         const d = document.createElement('div');
         d.className = 'ln' + (opts.arrow ? ' arrow' : '');
         const t = opts.t != null ? opts.t : (performance.now() - t0) / 1000;
-        const ps = principles.map(n => `<span class="p" title="${RV.PRINCIPLES[n] || ''}">原理${n}</span>`).join('');
+        const ps = principles.map(n => `<span class="p" title="${RV.PRINCIPLES[n] || ''}">ルール${n}</span>`).join('');
         d.innerHTML = `<span class="t">${t.toFixed(3)}s</span>${text}${ps}`;
         box.appendChild(d);
         box.scrollTop = box.scrollHeight;
@@ -79,12 +80,19 @@
     };
   };
 
+  // 因果ログに出てくるルール番号の意味を一覧表示する: RV.rulesList('#rules', [2,4,5])
+  RV.rulesList = function (el, nums) {
+    const box = typeof el === 'string' ? $(el) : el;
+    box.innerHTML = '<ul class="rules">' +
+      nums.map(n => `<li><b>ルール${n}</b>${RV.PRINCIPLES[n]}</li>`).join('') + '</ul>';
+  };
+
   // ---------- κ（剛性）表示 ----------
   // κ=1: 剛体（2点間距離は不変） κ→0: 剛体が世界から消える
   RV.kappaBadge = function (stage) {
     const d = document.createElement('div');
     d.className = 'kappa';
-    d.innerHTML = '剛性 κ = <b>1.00</b><div class="bar"><i style="width:100%"></i></div>';
+    d.innerHTML = 'かたさ κ = <b>1.00</b><div class="bar"><i style="width:100%"></i></div>';
     stage.appendChild(d);
     return {
       set(k) {
@@ -184,6 +192,18 @@
     new ResizeObserver(fit).observe(canvas.parentElement);
     fit();
   };
+
+  // ---------- スライダーの塗り（つまみまでを色付け。プログラムからの変更にも追従） ----------
+  function paintRanges() {
+    document.querySelectorAll('input[type=range]').forEach(r => {
+      const min = +r.min || 0, max = r.max === '' ? 100 : +r.max;
+      const p = ((+r.value - min) / ((max - min) || 1) * 100).toFixed(1) + '%';
+      if (r.style.getPropertyValue('--p') !== p) r.style.setProperty('--p', p);
+    });
+  }
+  document.addEventListener('input', e => { if (e.target.type === 'range') paintRanges(); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paintRanges); else paintRanges();
+  setInterval(paintRanges, 300);
 
   // 星の判定ユーティリティ: err が th[0] 以下で★3, th[1] 以下で★2, th[2] 以下で★1
   RV.grade = function (err, th) { return err <= th[0] ? 3 : err <= th[1] ? 2 : err <= th[2] ? 1 : 0; };

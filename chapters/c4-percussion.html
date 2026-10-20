@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>打撃の中心</title>
+<title>ボールのどこを突く？</title>
 <link rel="stylesheet" href="../shared/common.css">
 <script src="../shared/common.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
@@ -16,10 +16,21 @@
     <div class="panel mission">
       <h2>ミッション</h2>
       <p>キューでボールを1回だけ水平に突き、5 m 先の<b>ポケット（穴）</b>に落とせ。速すぎると穴を飛び越える。</p>
-      <p>★の数は<b>滑りによる損失</b>（摩擦熱 ÷ 最初の運動エネルギー）で決まる。滑らずに転がり出す高さ <i>h</i> で突けば損失は 0 になる。</p>
+      <p>★の数は、床でこすれて<b>むだになったエネルギー</b>の少なさで決まる。ちょうどよい高さ <i>h</i> を突けば、ボールは最初から滑らずに転がり、むだは 0 になる。</p>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>真ん中（重心）を突くと、ボールは回らずに床を滑り出す。高めを突くと、前に回りながら進む。突く高さで「進む速さ」と「回る速さ」の割合が変わる。</dd>
+        <dt>なぜ？</dt>
+        <dd>重心からずれた所を突くと、ボールを回そうとする働き（力のモーメント）が生まれる。進む速さと回る速さがぴったり合う高さで突くと、床との接点が止まったまま転がり出す。</dd>
+        <dt>身近な例</dt>
+        <dd>ビリヤードやボウリング。ボールの上のほうを突くと前に転がり、下を突くと逆回転がかかる。バットの「芯」で打つと手がしびれないのも同じ仕組み。</dd>
+      </dl>
     </div>
     <div class="panel">
-      <h2>レベル（剛性 κ）</h2>
+      <h2>レベル（かたさ κ）</h2>
       <div class="seg" id="levels">
         <button data-k="1" class="on">Lv1 κ=1.00</button>
         <button data-k="0.35">Lv2 κ=0.35</button>
@@ -30,7 +41,7 @@
     <div class="panel">
       <h2>操作</h2>
       <div class="row"><label>打点の高さ h</label><input type="range" id="hS" min="0.2" max="1.9" step="0.01" value="1.2"><span class="val" id="hV"></span></div>
-      <div class="row"><label>力積 Fτ</label><input type="range" id="pS" min="0.4" max="3.0" step="0.01" value="1.6"><span class="val" id="pV"></span></div>
+      <div class="row"><label>突く強さ Fτ</label><input type="range" id="pS" min="0.4" max="3.0" step="0.01" value="1.6"><span class="val" id="pV"></span></div>
       <div class="btns">
         <button class="btn primary" id="shootBtn">突く（Space）</button>
         <button class="btn" id="resetBtn">置き直す</button>
@@ -40,43 +51,48 @@
     <div class="panel">
       <h2>計測</h2>
       <div class="meters">
-        <div class="meter"><div class="k">v₀（重心）</div><div class="v" id="mV0">—</div></div>
-        <div class="meter"><div class="k">aω₀</div><div class="v" id="mW0">—</div></div>
-        <div class="meter"><div class="k">滑り v₁=v₀−aω₀</div><div class="v" id="mV1">—</div></div>
-        <div class="meter"><div class="k">滑り終わり t_c</div><div class="v" id="mTc">—</div></div>
-        <div class="meter"><div class="k">転がり速さ v_c</div><div class="v" id="mVc">—</div></div>
-        <div class="meter"><div class="k">滑り損失</div><div class="v" id="mLoss">—</div></div>
-        <div class="meter"><div class="k">慣性モーメント I/I₀</div><div class="v" id="mI">1.000</div></div>
-        <div class="meter"><div class="k">実効摩擦係数 μ</div><div class="v" id="mMu">—</div></div>
+        <div class="meter"><div class="k">進む速さ v₀</div><div class="v" id="mV0">—</div></div>
+        <div class="meter"><div class="k">回る速さ aω₀</div><div class="v" id="mW0">—</div></div>
+        <div class="meter"><div class="k">床での滑り v₀−aω₀</div><div class="v" id="mV1">—</div></div>
+        <div class="meter"><div class="k">滑りが止まる時刻</div><div class="v" id="mTc">—</div></div>
+        <div class="meter"><div class="k">転がる速さ</div><div class="v" id="mVc">—</div></div>
+        <div class="meter"><div class="k">むだになったエネルギー</div><div class="v" id="mLoss">—</div></div>
+        <div class="meter"><div class="k">回りにくさ I/I₀</div><div class="v" id="mI">1.000</div></div>
+        <div class="meter"><div class="k">床の摩擦係数 μ</div><div class="v" id="mMu">—</div></div>
       </div>
-      <p class="note">ステージ右上のグラフ：実線が計測した v と aω、破線が教科書の式 (3-80)(3-81)（μ は起動時に測った実効値）。</p>
+      <p class="note">右上のグラフ：青＝進む速さ、橙＝回る速さ（ふちの速さ aω）。実線が実測、破線が計算。2本が重なったら「滑らずに転がっている」。</p>
     </div>
     <div class="panel">
-      <h2>因果ログ</h2>
+      <h2>力のリレー記録</h2>
       <div class="causal" id="causal"></div>
+      <div id="rules" style="margin-top:8px"></div>
     </div>
     <div class="panel">
-      <h2>理論（教科書 3.8 撃力による運動）</h2>
-      <div class="formula">ΔP = M v₀ = Fτ                    (3-72)(3-74)
+      <h2>理論</h2>
+      <div class="formula">M v₀ = Fτ</div>
+      <p class="note">つまり：一瞬たたく力（力積 Fτ）が大きいほど、ボールは速く進み出す。重いボールほど遅い。</p>
+      <div class="formula">滑らない高さ  h = 3a/2（円板）／ 7a/5（球）</div>
+      <p class="note">つまり：床から半径の 1.5 倍（球なら 1.4 倍）の高さを突くと、進む速さと回る速さがぴったり合い、最初から滑らずに転がる。</p>
+      <details class="adv">
+        <summary>発展：教科書の式</summary>
+        <div class="formula">ΔP = M v₀ = Fτ                    (3-72)(3-74)
 ΔL′ = I_G ω₀ = (h−a) Fτ           (3-73)(3-75)
 滑り速度  v₁ = v₀ − aω₀           (3-77)
-
-球   I=⅖Ma²  → 滑らない条件 h = 7a/5
-円板 I=½Ma²  → 滑らない条件 h = 3a/2（この2D世界）
-
+球 I=⅖Ma² ／ 円板 I=½Ma²（回りにくさ＝慣性モーメント）
 滑り中  v(t) = v₀ − μg t          (3-80)
         ω(t) = ω₀ + (μMga/I) t    (3-81)
-転がり速さ  円板 v_c = (2h/3a) v₀ ／ 球 v_c = (5h/7a) v₀  (3-83)
+転がる速さ  円板 v_c = (2h/3a) v₀ ／ 球 v_c = (5h/7a) v₀  (3-83)
 打撃の中心  x = I_G/(Mh)</div>
+      </details>
     </div>
-    <p class="ref">参考: 小原「力学A 第3章 剛体」3.6.2(4)(7), 3.8, 例題（突かれた球） ／ 溝口ら 2016 原理1,2,4,6–9</p>
+    <p class="ref">参考文献: 小原「力学A 第3章 剛体」3.6.2, 3.8, 例題（突かれた球） ／ 溝口ら 2016「力と運動に関する因果推論理論」</p>
   </aside>
 </main>
 
 <script>
 (function () {
   'use strict';
-  RV.header({ id: 'c4', chap: '第4章', title: '打撃の中心', libs: ['Matter.js', 'Tone.js'] });
+  RV.header({ id: 'c4', chap: '第4章', title: 'ボールのどこを突く？', libs: ['Matter.js', 'Tone.js'] });
   if (window.Tone) RV.libOk('Tone.js');
   if (!window.Matter) { RV.libOk('Matter.js', false); return; }
   RV.libOk('Matter.js');
@@ -225,11 +241,11 @@
     const v0 = Ft / MASS;
     const w0 = (h - A) * Ft / (0.5 * MASS * A * A);   // 円板として理論値（式3-75）
     log.reset();
-    log.add(`(I) キューが高さ h=${hr.toFixed(2)}a の点を撃力 Fτ=${Ft.toFixed(2)} N·s で突く（因果の起点）`, [3], { t: 0, force: true });
+    log.add(`キューが高さ h=${hr.toFixed(2)}a の所を、強さ ${Ft.toFixed(2)} N·s で突いた`, [3], { t: 0, force: true });
     if (ball) {
       Body.setVelocity(ball, { x: v0 * S / FPS, y: 0 });
       Body.setAngularVelocity(ball, w0 / FPS);
-      log.add('剛体：撃力は瞬時に全体へ伝わり、重心は v₀=Fτ/M、回転は ω₀=(h−a)Fτ/I を同時に得る', [1, 4, 9], { t: 0, arrow: true });
+      log.add('かたいボールなので、突いた力は一瞬で全体に伝わる → 進む速さと回る速さが同時に決まった', [1, 4, 9], { t: 0, arrow: true });
     } else {
       // 打点付近の粒子にだけ撃力を配る（剛体でないので瞬時には全体へ伝わらない）
       const hit = { x: (BALL_X0 - A) * S, y: GY - h * S };
@@ -242,7 +258,7 @@
         const dv = Ft * (ws[i] / sw) / b.mass;
         Body.setVelocity(b, { x: b.velocity.x + dv * S / FPS, y: b.velocity.y });
       });
-      log.add('非剛体：打点のまわりの粒子だけが先に動く。反対側へはばね越しに遅れて伝わる', [2, 3], { t: 0, arrow: true });
+      log.add('やわらかいボールなので、突いた所のまわりだけが先に動いた → 反対側には遅れて伝わる', [2, 3], { t: 0, arrow: true });
     }
     shot = { t: 0, v0, w0, h, hr, Ft, E0: 0.5 * MASS * v0 * v0 + 0.5 * 0.5 * MASS * A * A * w0 * w0, tc: null, vc: null, loss: null, rec: [], meas0: null, slipLogged: false, stillT: 0 };
     if (!ball) shot.E0 = kinetic();
@@ -270,17 +286,17 @@
       $('#mV1').textContent = (v - aw).toFixed(2) + ' m/s';
       const slip = v - aw;
       if (Math.abs(slip) > 0.05) log.add(slip > 0
-        ? '接点が床の上を前へ滑る → 床を前に押す → 床は動かない → 後ろ向きの摩擦力を返す'
-        : '接点が床の上を後ろへ滑る（トップスピン過多）→ 床は前向きの摩擦力を返す', [2, 6, 7], { t: simT, arrow: true });
-      else log.add('接点の滑りはほぼ 0：最初から滑らずに転がる（打撃の中心を突いた）', [5], { t: simT, arrow: true });
+        ? 'ボールの下の端が床を前にこすった → 床は動かないので、後ろ向きの摩擦力で押し返す'
+        : 'ボールが回りすぎて下の端が床を後ろにこすった → 床は前向きの摩擦力で押し返す', [2, 6, 7], { t: simT, arrow: true });
+      else log.add('床とのこすれがほぼ 0 → 最初から滑らずに転がった（ちょうどよい高さを突いた！）', [5], { t: simT, arrow: true });
     }
     // 滑り終わりの判定
     if (shot.tc == null && simT > 2 / FPS && (Math.abs(v - aw) < 0.04 || simT > 2.0)) {
       shot.tc = simT; shot.vc = v;
       const E = kinetic();
       shot.loss = Math.max(0, 1 - E / shot.E0);
-      log.add(`t_c=${simT.toFixed(2)} s：滑りが止まる → 摩擦力は仕事をしなくなる（以後は力学的エネルギー保存）`, [1, 2], { t: simT, arrow: true });
-      if (!ball) log.add(`I(t) は ${(Math.min(...shot.rec.map(r => r.I))).toFixed(2)}〜${(Math.max(...shot.rec.map(r => r.I))).toFixed(2)} I₀ で揺れた → 打撃の中心 x=I_G/(Mh) が一つに決まらない`, [], { t: simT, arrow: true });
+      log.add(`${simT.toFixed(2)} 秒で滑りが止まった → ここからはエネルギーを失わずに転がる`, [1, 2], { t: simT, arrow: true });
+      if (!ball) log.add(`形が揺れて、回りにくさが ${(Math.min(...shot.rec.map(r => r.I))).toFixed(2)}〜${(Math.max(...shot.rec.map(r => r.I))).toFixed(2)} 倍に変わった → 「ちょうどよい高さ」が1つに決まらない`, [], { t: simT, arrow: true });
       $('#mTc').textContent = simT.toFixed(2) + ' s';
       $('#mVc').textContent = v.toFixed(2) + ' m/s';
       $('#mLoss').textContent = (shot.loss * 100).toFixed(1) + ' %';
@@ -300,23 +316,23 @@
     const th = ball ? [0.03, 0.10, 1.01] : [0.85, 0.92, 1.01]; // 非剛体は局所的な撃力でもともと大きく損をする
     const stars = inPocket ? Math.max(1, RV.grade(shot.loss, th)) : 0;
     if (inPocket) {
-      log.add('(II) 穴の縁と底（床に固定）が球を受け止め、反作用を返す', [6, 8], { t: simT, arrow: true });
+      log.add('ボールが穴に落ちた → 穴の底は動かないので、ボールを受け止めて押し返す', [6, 8], { t: simT, arrow: true });
       RV.saveStars('c4', stars); RV.sfx.win();
     } else RV.sfx.fail();
     const vcTh = (2 * shot.hr / 3) * shot.v0;
-    const lessonRigid = `滑らない高さは円板で h=3a/2=${(1.5 * A).toFixed(2)} m（教科書の球なら h=7a/5）。そこを突けば、床との接点は最初から止まっていて、摩擦は仕事をしない。`;
-    const lessonSoft = `剛体でないボールは、突いた点のまわりだけが先に動き、形が揺れるあいだ慣性モーメント I が一定にならない。教科書の打撃の中心 x=I_G/(Mh) は「I が一定」を前提にしているので、どの高さで突いても滑りや内部振動の損失をゼロにできない。`;
+    const lessonRigid = `計算では、床から ${(1.5 * A).toFixed(2)} m（半径の1.5倍）の高さを突くと滑らずに転がる（本物の球なら1.4倍）。そこを突けば床とこすれず、エネルギーがむだにならない。ボウリングの名人が、最初から転がるように投げるのと同じだ。`;
+    const lessonSoft = `やわらかいボールは、突いた所だけが先に動いてぐにゃりと揺れる。形が変わると回りにくさも変わるので、「ちょうどよい高さ」が決まらない。どこを突いても、揺れや滑りでエネルギーがむだになる。空気の抜けたボールを蹴っても、ぐにゃっとつぶれてうまく転がらないのと同じだ。`;
     RV.modal(inPocket ? `ポケット！ ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '入らなかった',
       `<table class="formula" style="width:100%">
-        <tr><td></td><td>理論（円板）</td><td>実測</td></tr>
-        <tr><td>v₀</td><td>${shot.v0.toFixed(2)}</td><td>${shot.meas0 ? shot.meas0.v.toFixed(2) : '—'} m/s</td></tr>
-        <tr><td>aω₀</td><td>${(A * shot.w0).toFixed(2)}</td><td>${shot.meas0 ? shot.meas0.aw.toFixed(2) : '—'} m/s</td></tr>
-        <tr><td>t_c</td><td>${theory(shot, 0).tc.toFixed(2)}</td><td>${shot.tc != null ? shot.tc.toFixed(2) : '—'} s</td></tr>
-        <tr><td>v_c</td><td>${vcTh.toFixed(2)}</td><td>${shot.vc != null ? shot.vc.toFixed(2) : '—'} m/s</td></tr>
-        <tr><td>滑り損失</td><td>${(theoryLoss(shot) * 100).toFixed(1)} %</td><td>${(shot.loss * 100).toFixed(1)} %</td></tr>
+        <tr><td></td><td>計算</td><td>実測</td></tr>
+        <tr><td>進む速さ</td><td>${shot.v0.toFixed(2)}</td><td>${shot.meas0 ? shot.meas0.v.toFixed(2) : '—'} m/s</td></tr>
+        <tr><td>回る速さ</td><td>${(A * shot.w0).toFixed(2)}</td><td>${shot.meas0 ? shot.meas0.aw.toFixed(2) : '—'} m/s</td></tr>
+        <tr><td>滑りが止まる時刻</td><td>${theory(shot, 0).tc.toFixed(2)}</td><td>${shot.tc != null ? shot.tc.toFixed(2) : '—'} s</td></tr>
+        <tr><td>転がる速さ</td><td>${vcTh.toFixed(2)}</td><td>${shot.vc != null ? shot.vc.toFixed(2) : '—'} m/s</td></tr>
+        <tr><td>むだなエネルギー</td><td>${(theoryLoss(shot) * 100).toFixed(1)} %</td><td>${(shot.loss * 100).toFixed(1)} %</td></tr>
       </table>
       <p class="note">${ball ? lessonRigid : lessonSoft}</p>
-      ${!inPocket ? '<p class="note">ヒント：ポケットに落ちるのは、転がる速さがだいたい 1.0〜1.6 m/s のとき。v_c=(2h/3a)v₀ を使って力積を決めよう。</p>' : ''}`,
+      ${!inPocket ? '<p class="note">ヒント：ポケットに落ちるのは、転がる速さがだいたい 1.0〜1.6 m/s のとき。強すぎると飛び越え、弱すぎると届かない。</p>' : ''}`,
       [{ label: 'もう一度', primary: true, onClick: resetBall }, { label: '閉じる' }]);
   }
   function theoryLoss(sh) {
@@ -412,8 +428,8 @@
     ctx.fillStyle = 'rgba(16,21,27,.9)'; ctx.fillRect(gx, gy, gw, gh);
     ctx.strokeStyle = '#2b3542'; ctx.strokeRect(gx, gy, gw, gh);
     ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
-    ctx.fillText('v(t) 青 ／ aω(t) 橙 ／ 破線＝理論', gx + 6, gy + 13);
-    if (!shot) { ctx.fillStyle = '#56606c'; ctx.fillText('突くと、ここに速度の時間変化が描かれる', gx + 6, gy + 34); }
+    ctx.fillText('進む速さ 青 ／ 回る速さ 橙 ／ 破線＝計算', gx + 6, gy + 13);
+    if (!shot) { ctx.fillStyle = '#56606c'; ctx.fillText('突くと、ここに速さの変化が描かれる', gx + 6, gy + 34); }
     if (shot && shot.rec.length) {
       const T = 2.0, Vm = Math.max(1, shot.v0 * 1.1, Math.abs(A * shot.w0) * 1.1);
       const PX = t => gx + 6 + t / T * (gw - 12), PY = v => gy + gh - 8 - (v / Vm) * (gh - 28);
@@ -435,7 +451,7 @@
         ctx.strokeStyle = '#6fdc8c'; ctx.lineWidth = 1; ctx.beginPath();
         shot.rec.forEach((r2, i) => { if (r2.t > T) return; const q = [PX(r2.t), gy + gh - 8 - (r2.I - 0.5) * (gh - 28)]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); });
         ctx.stroke();
-        ctx.fillStyle = '#6fdc8c'; ctx.fillText('緑＝I(t)/I₀', gx + gw - 80, gy + 13);
+        ctx.fillStyle = '#6fdc8c'; ctx.fillText('緑＝回りにくさ', gx + gw - 90, gy + 13);
       }
     }
 
@@ -465,14 +481,15 @@
     kappa = k; kBadge.set(k);
     document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
     $('#levelNote').textContent = k >= 0.999
-      ? '剛体の円板。I=½Ma² は一定で、打撃の中心がはっきり決まる。'
-      : `外周20粒子＋中心1粒子を、拘束の硬さ ${(0.015 + 0.35 * k).toFixed(3)} でつないだ「かつてボールだったもの」。I は形とともに揺れる。`;
+      ? 'かたいボール（円板）。形が変わらないので、回りにくさも一定。'
+      : `21個の粒をばねのようにつないだ「かつてボールだったもの」（つなぎの強さ ${(0.015 + 0.35 * k).toFixed(3)}）。形が揺れると回りにくさも変わる。`;
     resetBall();
   }
   document.querySelectorAll('#levels button').forEach(b => b.onclick = () => setLevel(+b.dataset.k));
 
   calibrate();
   $('#mMu').textContent = muEff.toFixed(3);
+  RV.rulesList('#rules', [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   setLevel(1);
   RV.loop(step, render, 1 / FPS);
 
@@ -481,10 +498,11 @@
     setLevel, shoot, set(h, p) { $('#hS').value = h; $('#pS').value = p; updLabels(); }
   };
 
-  RV.modal('第4章 打撃の中心',
+  RV.modal('第4章 ボールのどこを突く？',
     `<p>剛体が消えかけた世界でも、まだ<b>ボール</b>は丸い。だが、それもいつまで持つか。</p>
-     <p>静止した剛体に撃力を加えると、重心は <i>Mv₀=Fτ</i>、重心まわりの回転は <i>I_Gω₀=(h−a)Fτ</i> を得る（教科書 3.8）。ちょうどよい高さを突けば、床との接点は最初から止まっていて、ボールは<b>滑らずに</b>転がり出す。その点が床との接点に対する<b>打撃の中心</b>だ。</p>
-     <p><b>目的：</b>1回突いてボールを 5 m 先のポケットに落とす。滑りによる損失が小さいほど★が増える。Lv2・Lv3 ではボールが剛体でなくなる。</p>`,
+     <p>ビリヤードでボールの真ん中を突くと滑り、上のほうを突くと前に転がる。ちょうどよい高さ（<b>打撃の中心</b>）を突けば、最初から<b>滑らずに</b>転がり出す。</p>
+     <p><b>やること：</b>1回だけ突いて、ボールを 5 m 先の穴に落とせ。床でこすれるむだが少ないほど★が増える。</p>
+     <p class="note">操作：「打点の高さ h」で突く高さ、「突く強さ」で力を決めて「突く」（または Space）。緑の線（半径の1.5倍）あたりを突くと滑らずに転がる。Lv2・Lv3 ではボールがやわらかくなる。</p>`,
     [{ label: 'はじめる', primary: true }]);
 })();
 </script>

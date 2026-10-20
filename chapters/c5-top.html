@@ -24,16 +24,27 @@
 <main class="rv-main">
   <div class="rv-stage" id="stage">
     <canvas id="cv"></canvas>
-    <div id="trailLegend"><i style="background:#ffd166"></i>軸先端の軌跡（歳差）<i style="background:#5cc8ff"></i>伸びの小さいばね<i style="background:#ff5d73"></i>伸びの大きいばね</div>
+    <div id="trailLegend"><i style="background:#ffd166"></i>軸の先が描く円（首ふり）<i style="background:#5cc8ff"></i>あまりのびていないばね<i style="background:#ff5d73"></i>よくのびているばね</div>
   </div>
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
-      <p id="missionText">スピン n を選んでこまを回し、<b>10 秒間倒れずに</b>立たせ続けよ。さらに<b>歳差の周期</b>を目標 <b id="targetT">—</b> 秒に合わせよ。</p>
-      <p class="note">回転が足りなければ倒れる。剛体でないこまは、回しすぎると遠心力で裂ける。</p>
+      <p id="missionText">回す速さ n を決めてこまを回し、<b>10 秒間倒れずに</b>立たせ続けよ。さらに、軸がぐるっと一周する<b>首ふりの時間</b>を目標 <b id="targetT">—</b> 秒に合わせよ。</p>
+      <p class="note">ゆっくりだと倒れる。やわらかいこまは、速く回しすぎると外に引っぱられてちぎれる。</p>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>速く回るこまは、少し傾いても倒れず、軸の先がゆっくり円を描きます。これを<span class="word" title="専門用語では歳差運動（さいさうんどう）">首ふり運動（歳差運動）</span>といいます。</dd>
+        <dt>なぜ？</dt>
+        <dd>回っている物には「回転の勢い」があり、重力が倒そうとしても、その向きは横へずれるだけになるからです。勢いが大きいほど首ふりはゆっくりになります。</dd>
+        <dt>身近な例</dt>
+        <dd>走っている自転車は倒れにくい／回るコマ／ハンマー投げで回すほど手が外へ引っぱられる（やわらかいこまがちぎれるのと同じ）。</dd>
+      </dl>
     </div>
     <div class="panel">
-      <h2>レベル（世界の剛性）</h2>
+      <h2>レベル（世界のかたさ）</h2>
       <div class="seg" id="levels">
         <button data-l="0" class="on">L1 κ=1.00</button><button data-l="1">L2 κ=0.35</button><button data-l="2">L3 κ=0.08</button>
       </div>
@@ -41,38 +52,45 @@
     </div>
     <div class="panel">
       <h2>操作</h2>
-      <div class="row"><label>スピン n</label><input type="range" id="spin" min="4" max="30" step="0.5" value="12"><span class="val" id="spinV">12.0 rad/s</span></div>
-      <div class="row"><label>初期傾き θ₀</label><span class="val" style="text-align:left">0.30 rad（17°）固定</span></div>
+      <div class="row"><label>回す速さ n</label><input type="range" id="spin" min="4" max="30" step="0.5" value="12"><span class="val" id="spinV">12.0 rad/s</span></div>
+      <div class="row"><label>はじめの傾き</label><span class="val" style="text-align:left">17° で固定</span></div>
       <div class="btns"><button class="btn primary" id="go">回す</button><button class="btn" id="reset">リセット</button></div>
-      <p class="note">ドラッグで視点回転、ホイールでズーム。</p>
+      <p class="note">rad/s は「1秒に何ラジアン回るか」。6.3 rad/s で1秒に1回転です。ドラッグで視点を回し、ホイールでズーム。</p>
     </div>
     <div class="panel">
       <h2>計測</h2>
       <div class="meters">
         <div class="meter"><div class="k">経過時間</div><div class="v" id="mT">0.00 s</div></div>
-        <div class="meter"><div class="k">軸の傾き θ</div><div class="v" id="mTh">—</div></div>
-        <div class="meter"><div class="k">歳差周期（実測）</div><div class="v" id="mP">—</div></div>
-        <div class="meter"><div class="k">理論 T=2πIn/Mgh</div><div class="v" id="mPth">—</div></div>
-        <div class="meter"><div class="k">最大ひずみ</div><div class="v" id="mS">—</div></div>
-        <div class="meter"><div class="k">破断したばね</div><div class="v" id="mB">—</div></div>
+        <div class="meter"><div class="k">軸の傾き</div><div class="v" id="mTh">—</div></div>
+        <div class="meter"><div class="k">首ふり1周の時間（実測）</div><div class="v" id="mP">—</div></div>
+        <div class="meter"><div class="k">首ふり1周の時間（理論）</div><div class="v" id="mPth">—</div></div>
+        <div class="meter"><div class="k">ばねの最大ののび</div><div class="v" id="mS">—</div></div>
+        <div class="meter"><div class="k">切れたばね</div><div class="v" id="mB">—</div></div>
       </div>
     </div>
     <div class="panel">
-      <h2>因果ログ</h2>
+      <h2>力の伝わり方ログ</h2>
       <div class="causal" id="causal"></div>
+      <div id="rules" style="margin-top:8px"></div>
     </div>
     <div class="panel">
-      <h2>理論（教科書 3.9 こまの歳差運動）</h2>
-      <div class="formula">L = I n                         (3-84)
+      <h2>理論</h2>
+      <div class="formula">首ふり1周の時間 T ∝ 回す速さ n</div>
+      <p class="note">つまり、速く回すほど首ふりはゆっくりになる（2倍速く回せば、1周にかかる時間も2倍）。</p>
+      <div class="formula">ばねが引き戻す力 = ばね定数 × のび</div>
+      <p class="note">つまり、外に引っぱられる力が強いほど、ばねは大きくのびないと支えきれない。のびすぎると切れる。</p>
+      <details class="adv">
+        <summary>発展：教科書の式</summary>
+        <div class="formula">L = I n                         (3-84)
 dL/dt = N                       (3-86)
-N = ω × L                       (3-87)
 N = Mgh sinθ                    (3-89)
-ω' = Mgh / (I n)                (3-91)
-T  = 2π / ω' = 2π I n / (Mgh)   (3-92)</div>
-      <p class="note" id="params"></p>
-      <p class="note">剛体（κ=1）は重い対称こまのオイラー角 (θ, φ, ψ) の運動方程式を odex（Gragg–Bulirsch–Stoer 法）で解く。κ&lt;1 のこまは cannon-es の粒子とばねで組み、剛体の仮定（2点間距離が一定）を外している。</p>
+T  = 2π I n / (Mgh)             (3-92)</div>
+        <p class="note">L：回転の勢い（角運動量）、I：回りにくさ（慣性モーメント）、N：重力が倒そうとする回転の力（トルク）、h：支点から重心までの距離。</p>
+        <p class="note" id="params"></p>
+        <p class="note">かたいこま（κ=1）は教科書の運動方程式を数値計算ライブラリ odex で解いて動かしている。やわらかいこま（κ&lt;1）は cannon-es で小さな玉とばねを組み合わせて作った。</p>
+      </details>
     </div>
-    <p class="ref">参照: 小原「力学A 第3章 剛体」3.9（兵庫県立大）／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 — 5.3 遠心力と向心力、原理 2・3・4・5・10</p>
+    <p class="ref">参考: 小原「力学A 第3章 剛体」3.9 こまの歳差運動（兵庫県立大）／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 — 5.3 遠心力と向心力</p>
   </aside>
 </main>
 
@@ -85,9 +103,9 @@ const kBadge = RV.kappaBadge(stage);
 const log = RV.causal('#causal');
 const G = 9.8, TH0 = 0.30, DURATION = 10, BREAK = 0.18, K0 = 440;
 const LEVELS = [
-  { kappa: 1.00, target: 6.5, note: '剛体のこま。2点間の距離は常に一定で、重力のトルクは瞬時に全体へ伝わる（原理4）。' },
-  { kappa: 0.35, target: 9.5, note: '剛性が 35% に落ちた世界。こまは粒子とばねでかろうじて形を保つ。' },
-  { kappa: 0.08, target: 3.8, note: '剛性 8%。倒れない回転数と裂けない回転数の間の窓はわずかしかない。' }
+  { kappa: 1.00, target: 6.5, note: 'かたいこま。どこも伸び縮みしないので、重力の力は一瞬でこま全体に伝わる（ルール4）。' },
+  { kappa: 0.35, target: 9.5, note: 'かたさが 35% に落ちた世界。こまは小さな玉とばねでなんとか形を保っている。' },
+  { kappa: 0.08, target: 3.8, note: 'かたさ 8%。「倒れない速さ」と「ちぎれない速さ」の間はほんの少ししかない。' }
 ];
 
 let THREE, OrbitControls, CANNON, Solver;
@@ -134,7 +152,8 @@ const PAR = (() => {
 })();
 const FALL = Math.atan(L.H / L.R); // 円盤の縁が床に触れる傾き
 const Tth = n => 2 * Math.PI * PAR.I3 * n / (PAR.M * G * PAR.h);
-RV.$('#params').textContent = `M=${PAR.M.toFixed(2)} kg, h=${PAR.h.toFixed(3)} m, I(対称軸)=${PAR.I3.toFixed(3)} kg·m², I(支点まわり)=${PAR.I1.toFixed(3)} kg·m²。円盤の縁が床に触れる傾き ${(FALL * 180 / Math.PI).toFixed(0)}° で「倒れた」。`;
+RV.$('#params').textContent = `このこまの値: 質量 M=${PAR.M.toFixed(2)} kg、h=${PAR.h.toFixed(3)} m、I=${PAR.I3.toFixed(3)} kg·m²。円盤のふちが床に触れる傾き ${(FALL * 180 / Math.PI).toFixed(0)}° で「倒れた」と判定。`;
+RV.rulesList('#rules', [2, 4, 5, 10]);
 
 // ---------- three.js ----------
 const canvas = RV.$('#cv');
@@ -270,7 +289,7 @@ function reset() {
   ['#mT', '#mTh', '#mP', '#mS', '#mB'].forEach(id => RV.$(id).textContent = '—');
   RV.$('#go').disabled = false;
   log.reset();
-  log.add(soft ? `剛性 κ=${LEVELS[level].kappa}：こまは粒子 ${L.P.length} 個・ばね ${L.S.length} 本でできている。自由度は 6 ではなく ${3 * (L.P.length - 1)}。` : '剛体のこま：自由度は 6、支点が固定なので回転の 3 だけ。', soft ? [] : [4], { t: 0 });
+  log.add(soft ? `かたさ κ=${LEVELS[level].kappa}：こまは小さな玉 ${L.P.length} 個とばね ${L.S.length} 本でできている。玉はそれぞれ勝手に動ける。` : 'かたいこま：形は変わらず、全体が1つのかたまりとして回る。', soft ? [] : [4], { t: 0 });
 }
 
 function start() {
@@ -280,16 +299,16 @@ function start() {
   finished = false; trailN = 0;
   RV.$('#go').disabled = true;
   log.reset();
-  log.add(`手がこまに回転を与えた：L = I n = ${(PAR.I3 * n).toFixed(2)} kg·m²/s (3-84)`, [1], { t: 0 });
-  log.add(`重力 Mg が重心に作用 → 支点 O まわりのモーメント N = Mgh sinθ = ${(PAR.M * G * PAR.h * Math.sin(TH0)).toFixed(2)} N·m (3-89)`, [9], { arrow: true, t: 0 });
+  log.add(`手がこまを回した（回す速さ ${n.toFixed(1)} rad/s）。こまに「回転の勢い」がついた`, [1], { t: 0 });
+  log.add('重力がこまを横に倒そうとする', [], { arrow: true, t: 0 });
   if (sim.kind === 'rigid') {
-    log.add('剛体なので N は一瞬でこま全体に伝わる', [4], { arrow: true, t: 0 });
-    log.add('dL/dt = N：L の先端は倒れる向きではなく N の向き（水平）へ動く → 歳差 (3-86, 3-87)', [], { arrow: true, t: 0 });
+    log.add('かたいこまなので、その力は一瞬でこま全体に伝わる', [4], { arrow: true, t: 0 });
+    log.add('回転の勢いがあるので、倒れずに軸の向きが横へずれていく → 首ふり運動', [], { arrow: true, t: 0 });
   } else {
-    log.add('回るこまは「回転場」をつくる。場の中の各粒子は場の力としての遠心力 mω²r を受ける', [10], { arrow: true, t: 0 });
-    log.add('粒子が外へ引かれ、ばねを引っぱる（作用）', [3], { arrow: true, t: 0 });
-    log.add('ばねは伸びた分だけ kΔx を反作用として返す＝向心力。返せる根拠は「伸びたこと」', [2, 5], { arrow: true, t: 0 });
-    log.add('剛体ではないので、重力のトルクはばねの伸び縮みを経由して遅れて伝わる', [], { arrow: true, t: 0 });
+    log.add('回っているこまの上の玉は、外向きに引っぱられる（遠心力）', [10], { arrow: true, t: 0 });
+    log.add('玉が外へ引かれて、ばねを引っぱる', [3], { arrow: true, t: 0 });
+    log.add('ばねはのびた分だけ内向きに引き戻す（向心力）。引き戻せるのは「のびたから」', [2, 5], { arrow: true, t: 0 });
+    log.add('かたくないので、重力の力はばねののび縮みを通って少し遅れて伝わる', [], { arrow: true, t: 0 });
   }
   RV.sfx.tone(220 + n * 12, '8n');
 }
@@ -322,10 +341,10 @@ function stepSim(dt) {
   sim.prevAz = a.az;
   sim.tilt = a.tilt;
   const laps = Math.floor(sim.unw / (2 * Math.PI));
-  if (laps > sim.laps) { sim.laps = laps; log.add(`歳差 ${laps} 周目（平均周期 ${(2 * Math.PI * sim.t / sim.unw).toFixed(2)} s）`, [], { t: sim.t }); RV.sfx.tone(660, '32n'); }
+  if (laps > sim.laps) { sim.laps = laps; log.add(`首ふり ${laps} 周目（1周平均 ${(2 * Math.PI * sim.t / sim.unw).toFixed(2)} 秒）`, [], { t: sim.t }); RV.sfx.tone(660, '32n'); }
   if (sim.kind === 'soft') {
-    if (sim.curStrain > BREAK * 0.75 && sim.t - sim.lastWarn > 1) { sim.lastWarn = sim.t; log.add(`ひずみ ${(sim.curStrain * 100).toFixed(0)}%：ばねが返せる反作用の限界に近い`, [5], { t: sim.t }); }
-    if (sim.broken > 0 && !sim.toldBreak) { sim.toldBreak = true; log.add('遠心力に見合う伸びを超え、ばねが反作用を返せなくなった → 破断', [2, 5], { arrow: true, t: sim.t }); RV.sfx.thud(0.8); }
+    if (sim.curStrain > BREAK * 0.75 && sim.t - sim.lastWarn > 1) { sim.lastWarn = sim.t; log.add(`ばねが ${(sim.curStrain * 100).toFixed(0)}% のびた：もうすぐ支えきれなくなる`, [5], { t: sim.t }); }
+    if (sim.broken > 0 && !sim.toldBreak) { sim.toldBreak = true; log.add('外へ引っぱる力に負けて、ばねがのびすぎて切れた', [2, 5], { arrow: true, t: sim.t }); RV.sfx.thud(0.8); }
     if (sim.broken > L.S.length * 0.12) return finish('torn');
   }
   if (a.tilt > FALL) return finish('fell');
@@ -338,36 +357,36 @@ async function finish(kind) {
   finished = true;
   const n = sim.n, Tm = measuredT(), target = LEVELS[level].target, Tt = Tth(n);
   if (kind === 'fell') {
-    log.add(`傾き ${(sim.tilt * 180 / Math.PI).toFixed(0)}° で円盤が床に触れた。In が小さく章動が抑えられなかった`, [], { t: sim.t });
-    RV.sfx.fail(); RV.toast(stage, '倒れた — スピン不足');
+    log.add(`傾き ${(sim.tilt * 180 / Math.PI).toFixed(0)}° で円盤が床に触れた。回転の勢いが足りなかった`, [], { t: sim.t });
+    RV.sfx.fail(); RV.toast(stage, '倒れた — 回す速さが足りない');
   } else if (kind === 'torn') {
-    log.add(`ばね ${sim.broken} 本が破断。こまは形を保てない`, [5], { t: sim.t });
-    RV.sfx.fail(); RV.toast(stage, '裂けた — 回しすぎ');
+    log.add(`ばね ${sim.broken} 本が切れた。こまは形を保てない`, [5], { t: sim.t });
+    RV.sfx.fail(); RV.toast(stage, 'ちぎれた — 回しすぎ');
   } else {
     RV.sfx.win();
   }
   RV.$('#go').disabled = false;
   if (kind !== 'ok') {
     const why = kind === 'fell'
-      ? 'スピン n が小さいと角運動量 L=In も小さく、重力のトルクで軸が大きく振れる（章動）。もう少し速く回そう。'
-      : '回転場の遠心力 mω²r に対して、ばねは伸びることでしか反作用（向心力）を返せない。伸びが限界を超えたばねは切れる。回転を落とそう。';
-    RV.modal(kind === 'fell' ? 'こまが倒れた' : 'こまが裂けた', `<p>${why}</p><p class="note">n = ${n.toFixed(1)} rad/s、${sim.t.toFixed(2)} 秒で終了。</p>`, [{ label: 'もう一度', primary: true, onClick: reset }]);
+      ? 'ゆっくり回すと「回転の勢い」が小さく、重力に負けて倒れてしまう。止まりかけの自転車がふらつくのと同じ。もう少し速く回そう。'
+      : '速く回すほど、こまの玉は外へ強く引っぱられる（ハンマー投げで手が引っぱられるのと同じ）。やわらかいこまは、ばねがのびることでしか引き戻せず、のびすぎたばねは切れる。回す速さを落とそう。';
+    RV.modal(kind === 'fell' ? 'こまが倒れた' : 'こまがちぎれた', `<p>${why}</p><p class="note">回す速さ ${n.toFixed(1)} rad/s、${sim.t.toFixed(2)} 秒で終了。</p>`, [{ label: 'もう一度', primary: true, onClick: reset }]);
     return;
   }
   const err = Math.abs(Tm - target) / target;
   const stars = RV.grade(err, [0.08, 0.2, Infinity]);
   RV.saveStars('c5', stars);
-  log.add(`10 秒間立ち続けた。歳差周期 ${Tm.toFixed(2)} s（目標 ${target.toFixed(1)} s、誤差 ${(err * 100).toFixed(0)}%）`, [], { t: sim.t });
+  log.add(`10 秒間立ち続けた。首ふり1周 ${Tm.toFixed(2)} 秒（目標 ${target.toFixed(1)} 秒、ずれ ${(err * 100).toFixed(0)}%）`, [], { t: sim.t });
   const soft = sim.kind === 'soft';
   const comment = soft
-    ? `粒子こまの最大ひずみは ${(sim.maxStrain * 100).toFixed(0)}%。形が変わると I も h も一定ではなくなり、式 (3-92) の「I は剛体に固有の定数」という前提が崩れる。回転を速くするほど遠心力でこまが膨らみ、ばねが切れる危険が増す。`
-    : `理論式 (3-92) は「速いこま」の近似。実際のこまは章動（うなずき運動）を伴うので、実測は理論から少しずれる。`;
+    ? `やわらかいこまは回ると外へふくらみ（ばねの最大ののび ${(sim.maxStrain * 100).toFixed(0)}%）、形が変わる。理論の式は「形が変わらない＝回りにくさが一定」と決めて作られているので、かたくないこまには当てはまりにくい。`
+    : `回転の勢いが重力に勝って、こまは倒れずに首をふり続けた（走る自転車が倒れないのと同じ）。理論の式は「十分速く回るこま」を考えたもの。本物のこまは軸が小さくうなずく動きもするので、少しずれる。`;
   RV.modal(`クリア ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}`,
     `<table style="width:100%;font-family:var(--mono);font-size:13px">
-      <tr><td>スピン n</td><td>${n.toFixed(1)} rad/s</td></tr>
-      <tr><td>歳差周期 実測</td><td>${Tm.toFixed(2)} s</td></tr>
-      <tr><td>理論 2πIn/(Mgh) (3-92)</td><td>${Tt.toFixed(2)} s</td></tr>
-      <tr><td>目標</td><td>${target.toFixed(1)} s（誤差 ${(err * 100).toFixed(1)}%）</td></tr>
+      <tr><td>回す速さ n</td><td>${n.toFixed(1)} rad/s</td></tr>
+      <tr><td>首ふり1周（実際）</td><td>${Tm.toFixed(2)} 秒</td></tr>
+      <tr><td>首ふり1周（理論）</td><td>${Tt.toFixed(2)} 秒</td></tr>
+      <tr><td>目標</td><td>${target.toFixed(1)} 秒（ずれ ${(err * 100).toFixed(1)}%）</td></tr>
     </table><p>${comment}</p>`,
     [{ label: '閉じる' }, { label: 'もう一度', primary: true, onClick: reset }]);
 }
@@ -427,9 +446,10 @@ setLevel(0);
 window.__c5 = { start, reset, setLevel, get sim() { return sim; }, get finished() { return finished; }, measuredT, ui };
 
 RV.modal('第5章　こまは倒れる',
-  `<p>剛体が世界から消えはじめた。こまは「回転軸に関して対称な質量分布をもつ回転<b>剛体</b>」と定義される（教科書 3.9.1）。剛体でなくなったこまは、まだ回れるだろうか。</p>
-   <p>回るこまは重力に引き倒されそうになりながら、倒れずに軸の先端で円を描く——<b>歳差運動</b>。その周期は T = 2πIn/(Mgh)。</p>
-   <p><b>目的：</b>スピン n を決めて回し、10 秒間倒れずに立たせ、歳差周期を目標に近づけよ。L2・L3 ではこまは粒子とばねでできていて、回しすぎると遠心力で裂ける。</p>`,
+  `<p>剛体が世界から消えはじめた。こまは「形の変わらない回る物体」と定義される——では、剛体でなくなったこまは、まだ回れるだろうか。</p>
+   <p><b>やること：</b>こまを 10 秒間倒さずに回し続けろ。</p>
+   <p><b>操作：</b>右の「回す速さ」スライダーで速さを決めて「回す」。遅いと倒れ、L2・L3 のやわらかいこまは速すぎると遠心力でちぎれる。</p>
+   <p class="note">速く回るこまは傾いても倒れず、軸の先がゆっくり円を描く（<b>首ふり運動</b>）。走る自転車が倒れにくいのと同じ仲間。首ふり1周の時間を目標に近づけるほど★が増える。</p>`,
   [{ label: 'はじめる', primary: true }]);
 </script>
 </body>

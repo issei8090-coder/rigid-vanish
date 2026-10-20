@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>透過伝達性の喪失</title>
+<title>押した力が届かない</title>
 <link rel="stylesheet" href="../shared/common.css">
 <script src="../shared/common.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -20,10 +20,21 @@
     <div class="panel mission">
       <h2>ミッション</h2>
       <p>列の先頭のブロックを手で押し、<b>最後尾のブロック</b>を鐘に当てて鳴らせ。鐘が開くのは<b>時間窓</b>の間だけ。当たる速さは <b>0.8 m/s 以上</b>必要。</p>
-      <p class="note">剛体なら押した瞬間に列全体が動く。剛体でなくなると、力が伝わるまでに時間がかかる。そのぶん早めに押しはじめること。</p>
+      <p class="note">かたい列なら押した瞬間に全体が動く。やわらかい列では、力が後ろまで届くのに時間がかかる。そのぶん早めに押しはじめよう。</p>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>やわらかい列を押すと、まず先頭だけが動き、ばねが縮んでから次のブロックが動く。動きは「波」のように少しずつ後ろへ伝わる。</dd>
+        <dt>なぜ？</dt>
+        <dd>ばねは縮まないと押し返さない。縮むには時間がかかるので、力のリレーに遅れが出る。ばねがやわらかいほど遅い。</dd>
+        <dt>身近な例</dt>
+        <dd>満員電車の列や、ホースに水を流すときの「遅れ」。長いスプリング（スリンキー）の端を押すと、縮みが波になって進むのが見える。</dd>
+      </dl>
     </div>
     <div class="panel">
-      <h2>レベル（剛性 κ）</h2>
+      <h2>レベル（かたさ κ）</h2>
       <div class="seg" id="levels">
         <button data-k="1" class="on">Lv1 κ=1.00</button>
         <button data-k="0.35">Lv2 κ=0.35</button>
@@ -43,40 +54,41 @@
       <h2>計測</h2>
       <div class="meters">
         <div class="meter"><div class="k">経過時間</div><div class="v" id="mT">0.00 s</div></div>
-        <div class="meter"><div class="k">手が感じる反作用</div><div class="v" id="mF">0 N</div></div>
-        <div class="meter"><div class="k">伝播遅延（実測）</div><div class="v" id="mDelay">—</div></div>
-        <div class="meter"><div class="k">伝播遅延（理論）</div><div class="v" id="mDelayTh">—</div></div>
+        <div class="meter"><div class="k">手が押し返される力</div><div class="v" id="mF">0 N</div></div>
+        <div class="meter"><div class="k">届くまでの時間（実測）</div><div class="v" id="mDelay">—</div></div>
+        <div class="meter"><div class="k">届くまでの時間（計算）</div><div class="v" id="mDelayTh">—</div></div>
         <div class="meter"><div class="k">最後尾の速さ</div><div class="v" id="mV">0.00 m/s</div></div>
-        <div class="meter"><div class="k">反作用の最大値（鐘の前）</div><div class="v" id="mFmax">0 N</div></div>
+        <div class="meter"><div class="k">押し返す力の最大（鐘の前）</div><div class="v" id="mFmax">0 N</div></div>
       </div>
       <div style="position:relative;height:150px"><canvas id="forceChart"></canvas></div>
-      <p class="note">赤い破線は 100 N。剛体でない列（豆腐やのれんのようなもの）は、先頭のブロックだけが <i>mα</i> を返すので、100 N で押すことができない（原理5）。</p>
+      <p class="note">赤い破線は 100 N。やわらかい列（豆腐やのれんのようなもの）は、まだ先頭しか動いていないので手を強く押し返せない。だから 100 N で押すことができない（ルール5）。</p>
     </div>
     <div class="panel">
-      <h2>因果ログ（溝口ら 2016 §6.2 の手順）</h2>
+      <h2>力のリレー記録</h2>
       <div class="causal" id="causal"></div>
+      <div id="rules" style="margin-top:8px"></div>
     </div>
     <div class="panel">
       <h2>理論</h2>
-      <div class="formula">剛体（κ=1）：原理4「剛体は与えられた力を瞬時に伝達する」
-  → 押した瞬間に全質量 M=Nm が加速する
-  → 手に返る反作用 −F = −Mα
-
-非剛体（ばね定数 k の質点列）：
-  波の速さ  c = a√(k/m)     （a: ブロック間隔）
-  先頭→最後尾の到達時間  Δt ≈ (N−1)√(m/k)
-  手に返る反作用は、まだ動いていない部分の質量を含まない
-
-重心の運動方程式  M d²r_G/dt² = Σ F_i   (3-3)</div>
+      <div class="formula">F = M a</div>
+      <p class="note">つまり：かたい列は全部（M = 8 kg）がいっしょに動くので、手は列全体の重さぶん強く押し返される。</p>
+      <div class="formula">届くまでの時間 ≈ (N−1) × √(m / k)</div>
+      <p class="note">つまり：ブロック1個ぶん進むのに √(m/k) 秒かかり、それが (8−1) 回くり返される。ばね定数 k が小さい（やわらかい）ほど遅い。</p>
+      <details class="adv">
+        <summary>発展：教科書の式</summary>
+        <div class="formula">重心の運動方程式  M d²r_G/dt² = Σ F_i   (3-3)
+波の速さ  c = a√(k/m)   （a: ブロックの間隔）
+剛体は力を一瞬で全体に伝える（溝口ら 原理4）</div>
+      </details>
     </div>
-    <p class="ref">参考: 小原「力学A 第3章 剛体」(兵庫県立大) 3.1, 3.4 ／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016, 4.1 §3, 4.2, 6.2</p>
+    <p class="ref">参考文献: 小原「力学A 第3章 剛体」(兵庫県立大) 3.1, 3.4 ／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016, 4.1 §3, 4.2, 6.2</p>
   </aside>
 </main>
 
 <script type="module">
 import RAPIER from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier2d-compat@0.14.0/rapier.es.js';
 
-RV.header({ id: 'c1', chap: '第1章', title: '透過伝達性の喪失', libs: ['Rapier2D', 'Chart.js', 'Tone.js'] });
+RV.header({ id: 'c1', chap: '第1章', title: '押した力が届かない', libs: ['Rapier2D', 'Chart.js', 'Tone.js'] });
 if (window.Chart) RV.libOk('Chart.js');
 if (window.Tone) RV.libOk('Tone.js');
 
@@ -169,8 +181,8 @@ function setLevel(k) {
   kBadge.set(k);
   document.querySelectorAll('#levels button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
   $('#levelNote').textContent = k >= 0.999
-    ? '列は一体の剛体（コライダー8個をもつ剛体1つ）。2点間の距離は変わらない。'
-    : `ブロック同士は ばね定数 k = ${(k * K0).toFixed(0)} N/m のばねでつながっている。剛体はもうない。`;
+    ? '8個のブロックは1つのかたまり（剛体）。どの2点の間の距離も変わらない。'
+    : `ブロック同士は ばね（ばね定数 k = ${(k * K0).toFixed(0)} N/m）でつながっている。もう剛体ではない。`;
   $('#mDelayTh').textContent = theoryDelay().toFixed(3) + ' s';
   resetRound();
 }
@@ -195,7 +207,7 @@ function startRound() {
   $('#pushBtn').disabled = false;
   $('#startBtn').disabled = true;
   $('#winInfo').textContent = `鐘が開くのは t = ${winOpen.toFixed(2)} 〜 ${(winOpen + WIN_W).toFixed(2)} s（中心 ${(winOpen + WIN_W / 2).toFixed(2)} s）`;
-  log.add('(I) 手が先頭ブロックに力を加えようとする（因果の起点）', [9], { t: 0, force: true });
+  log.add('スタート：手が先頭のブロックを押そうとしている', [9], { t: 0, force: true });
 }
 
 // ---------------- 物理ステップ ----------------
@@ -222,17 +234,17 @@ function step() {
   // ---- 因果ログ（§6.2 の (I)〜(IV)） ----
   if (contact && !prevContact) {
     if (firstContactT == null) firstContactT = t;
-    log.add(`手→ブロック1 に作用 F（手の筋力が起点）`, [3], { t, arrow: true });
+    log.add(`手がブロック1を押した`, [3], { t, arrow: true });
   }
   for (let i = 0; i < N; i++) {
     if (!moved[i] && bv(i) > V_ARRIVE) {
       moved[i] = true;
       if (kappa >= 0.999 && i === 0) {
-        log.add(`(IV-2) 剛体：ブロック1〜${N} は一体。力は瞬時に全体へ伝わる`, [4], { t, arrow: true });
-        log.add(`(IV-1) 全質量 M=${N * M_BLOCK} kg が加速 α → 反作用 −Mα を手に返す`, [1, 2, 5], { t, arrow: true });
+        log.add(`ブロック1〜${N} は1つのかたまりなので、全部が同時に動き出した`, [4], { t, arrow: true });
+        log.add(`${N * M_BLOCK} kg 全体が加速した → そのぶん手が強く押し返される`, [1, 2, 5], { t, arrow: true });
       } else if (kappa < 0.999) {
-        if (i < N - 1) log.add(`(IV-2) ブロック${i + 1} が動いた → 前方のブロック${i + 2} をばね越しに押す`, [2, 3], { t, arrow: true });
-        else log.add(`(IV-1) ブロック${N} の前には何もない → 加速し −mα を返す`, [1, 2, 5], { t, arrow: true });
+        if (i < N - 1) log.add(`ブロック${i + 1} が動いた → ばねが縮んでブロック${i + 2} を押す`, [2, 3], { t, arrow: true });
+        else log.add(`ついに最後尾のブロック${N} が動き出した`, [1, 2, 5], { t, arrow: true });
       }
       if (i === 0) firstMovedT = t;
       if (i === N - 1) lastMovedT = t;
@@ -246,7 +258,7 @@ function step() {
   const lastRight = bx(N - 1) + W / 2;
   if (hitT == null && lastRight >= BELL_X - 0.005) {
     hitT = t; hitV = bv(N - 1);
-    log.add(`(II) 鐘は動かない（床に固定）→ 押された力と同じ大きさの反作用を返す`, [2, 6, 7, 8], { t, arrow: true });
+    log.add(`ブロック${N} が鐘にぶつかった → 鐘は固定されているので同じ力で押し返す`, [2, 6, 7, 8], { t, arrow: true });
     const open = t >= winOpen && t <= winOpen + WIN_W;
     if (open && hitV >= V_MIN) RV.sfx.bell(); else RV.sfx.thud(0.6);
     setTimeout(finish, 600);
@@ -280,14 +292,14 @@ function finish() {
   }
   if (stars > 0) { RV.saveStars('c1', stars); RV.sfx.win(); } else RV.sfx.fail();
   const lesson = kappa >= 0.999
-    ? '剛体の列では、押した瞬間に最後尾まで動き出した（遅延 0）。原理4「透過伝達性」がそのまま成り立つ世界だ。そのかわり、手は列全体の質量ぶんの反作用を受けた。'
-    : `剛体がない列では、力が波として伝わり、最後尾が動き出すまでに ${measDelay != null ? measDelay.toFixed(3) : '—'} s かかった（理論 ${theoryDelay().toFixed(3)} s）。F が原因で α が結果だという因果が、時間のずれとして目に見える（論文 4.1 §3）。手に返る反作用も、まだ動いていない後ろのブロックの質量を含まない。`;
+    ? 'かたい列は、押した瞬間に最後尾まで動き出した（遅れ 0 秒）。そのかわり、手は列全体（8 kg）ぶん強く押し返された。重い台車を押し出すときに手がずしりと重いのと同じだ。'
+    : `やわらかい列では、力が波のように伝わり、最後尾が動くまで ${measDelay != null ? measDelay.toFixed(2) : '—'} 秒かかった（計算では ${theoryDelay().toFixed(2)} 秒）。「押した（原因）→ 動いた（結果）」の順番が、時間のずれとして目に見えた。満員電車で後ろから押されても、前の人が動くまで少し遅れるのと同じだ。`;
   RV.modal(stars > 0 ? `成功 ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '失敗',
     `<p>${verdict}</p>
      <table class="formula" style="width:100%">
-      <tr><td>伝播遅延 理論</td><td>${theoryDelay().toFixed(3)} s</td></tr>
-      <tr><td>伝播遅延 実測</td><td>${measDelay != null ? measDelay.toFixed(3) + ' s' : '—'}</td></tr>
-      <tr><td>手に返った反作用の最大値（鐘に当たる前）</td><td>${Fmax.toFixed(0)} N ${Fmax < 100 ? '（100 N に届かない）' : ''}</td></tr>
+      <tr><td>届くまでの時間（計算）</td><td>${theoryDelay().toFixed(3)} s</td></tr>
+      <tr><td>届くまでの時間（実測）</td><td>${measDelay != null ? measDelay.toFixed(3) + ' s' : '—'}</td></tr>
+      <tr><td>手が押し返された力の最大（鐘の前）</td><td>${Fmax.toFixed(0)} N ${Fmax < 100 ? '（100 N に届かない）' : ''}</td></tr>
       <tr><td>当たった速さ</td><td>${hitT != null ? hitV.toFixed(2) + ' m/s' : '—'}</td></tr>
      </table>
      <p class="note">${lesson}</p>`,
@@ -377,7 +389,7 @@ function render() {
   // ---- 時空図（ブロック番号 × 時間、色＝速度） ----
   const hy0 = sceneH + 26, hh = h - hy0 - 26;
   ctx.fillStyle = '#8d9aab'; ctx.textAlign = 'left';
-  ctx.fillText(w < 700 ? '時空図（縦＝ブロック、横＝時間、明るさ＝速度）' : '時空図：縦＝ブロック番号、横＝時間、明るさ＝速度（剛体なら縦一直線、非剛体なら斜めの波）', 14, hy0 - 8);
+  ctx.fillText(w < 700 ? '動きの記録（縦＝ブロック、横＝時間、明るい＝速い）' : '動きの記録：縦＝ブロック番号、横＝時間、明るい＝速い（かたい列は縦一直線、やわらかい列は斜めの波）', 14, hy0 - 8);
   const hx0 = 40, hw = w - 56;
   ctx.fillStyle = '#10151b'; ctx.fillRect(hx0, hy0, hw, hh);
   const rowH = hh / N, span = 6;
@@ -417,7 +429,7 @@ if (window.Chart) {
   chart = new Chart(document.getElementById('forceChart'), {
     type: 'line',
     data: { datasets: [
-      { label: '手に返る反作用 [N]', data: forceData, borderColor: '#ffd166', borderWidth: 1.5, pointRadius: 0, parsing: false },
+      { label: '手が押し返される力 [N]', data: forceData, borderColor: '#ffd166', borderWidth: 1.5, pointRadius: 0, parsing: false },
       { label: '100 N', data: [{ x: 0, y: 100 }, { x: 8, y: 100 }], borderColor: '#ff5d73', borderDash: [5, 4], borderWidth: 1, pointRadius: 0, parsing: false }
     ] },
     options: {
@@ -451,14 +463,14 @@ window.__c1 = {
   setLevel, startRound, press(v) { holding = v; }, setWindow(x) { winOpen = x; }
 };
 
+RV.rulesList('#rules', [1, 2, 3, 4, 5, 9]);
 setLevel(1);
 RV.loop(step, render, DT);
 
-RV.modal('第1章 透過伝達性の喪失',
-  `<p>ある朝、世界から<b>剛体</b>が消えはじめた。剛体とは「2点間の距離が運動を通して一定である質点系」（教科書 3.1）。その距離が、もう保たれない。</p>
-   <p>剛体には、与えられた力を<b>瞬時に</b>全体へ伝えるという性質があった（溝口ら 原理4）。剛体が消えると、押した力は<b>波</b>になって、遅れて届く。</p>
-   <p><b>目的：</b>8個のブロックの列を手で押し、最後尾を<b>鐘が開いている時間窓</b>のあいだに当てる。κ が小さいほど力が届くのは遅い。そのぶん早めに押しはじめること。</p>
-   <p class="note">操作：「ラウンド開始」→ 時刻を見て「押す」を長押し（または Space）。</p>`,
+RV.modal('第1章 押した力が届かない',
+  `<p>ある朝、世界から<b>剛体</b>が消えはじめた。どんなに押しても形を変えないはずの「かたい物」が、ゼリーのようにたわみ出したのだ。押した力は、もう一瞬では向こう側に届かない。</p>
+   <p><b>やること：</b>8個のブロックの列を押して、最後尾を<b>鐘が開いている間</b>にぶつけて鳴らせ。</p>
+   <p class="note">操作：「ラウンド開始」を押すと鐘が開く時刻が出る。「押す」ボタン（または Space）を押している間、手が前に出てブロックを押す。やわらかい列ほど力が届くのが遅いので、早めに押しはじめよう。</p>`,
   [{ label: 'はじめる', primary: true }]);
 </script>
 </body>

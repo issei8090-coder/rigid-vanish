@@ -37,13 +37,24 @@
     <div class="panel mission">
       <h2>ミッション</h2>
       <p>世界に残った最後の剛体「押し棒」で、相手を <b>100〜140 N</b> の力で <b>1 秒間</b>押し続けよ。</p>
-      <p class="note">押した力そのものではなく、相手が返してきた反作用だけが「押せた力」になる。</p>
+      <p class="note">100 N は約 10 kg の物を持ち上げるくらいの力。手がいくら頑張っても、相手が押し返してくれた分しか「押せた力」にならない。</p>
       <div class="hold"><i id="holdBar"></i></div>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>壁は強く押せるのに、のれんや豆腐はいくら頑張っても強く押せません。</dd>
+        <dt>なぜ？</dt>
+        <dd>押すと必ず同じ大きさで押し返されます（作用・反作用）。押し返せるのは「動かない」物か、つぶれて耐える物だけ。すぐ逃げる物は押し返せないので、こちらも強く押せません。</dd>
+        <dt>身近な例</dt>
+        <dd>「のれんに腕押し」／豆腐を押すとつぶれてしまう／壁を押すと手に押し返される感じがする。</dd>
+      </dl>
     </div>
     <div class="panel">
       <h2>相手</h2>
       <div class="seg targets" id="targets"><button data-t="wall" class="on">壁</button><button data-t="tofu">豆腐</button><button data-t="noren">のれん</button></div>
-      <h2 style="margin-top:10px">レベル（世界の剛性）</h2>
+      <h2 style="margin-top:10px">レベル（世界のかたさ）</h2>
       <div class="seg" id="levels"><button data-l="0" class="on">L1 κ=1.00</button><button data-l="1">L2 κ=0.35</button><button data-l="2">L3 κ=0.08</button></div>
       <p class="note" id="levelNote"></p>
     </div>
@@ -52,38 +63,41 @@
       <div class="pushpad"><button class="btn" id="pull">◀ 引く（←）</button><button class="btn primary" id="push">押す ▶（→ / Space）</button></div>
       <div class="row"><label>手の位置</label><input type="range" id="hand" min="-1.6" max="1.2" step="0.005" value="-1.3"><span class="val" id="handV"></span></div>
       <div class="btns"><button class="btn" id="reset">やり直す</button></div>
-      <p class="note">手は押し棒をばね（k = 800 N/m、最大 300 N）で目標位置へ引っぱる。押し棒は世界で唯一の剛体。</p>
+      <p class="note">手は押し棒をばねのように目標の位置へ引っぱる（最大 300 N）。オレンジの矢印が手の位置。</p>
     </div>
     <div class="panel">
       <h2>計測</h2>
       <div class="meters">
         <div class="meter"><div class="k">手が出そうとした力</div><div class="v" id="mHand">—</div></div>
-        <div class="meter"><div class="k">押せた力（反作用）</div><div class="v" id="mF">—</div></div>
-        <div class="meter"><div class="k">押し棒の加速度 α</div><div class="v" id="mA">—</div></div>
-        <div class="meter"><div class="k">豆腐の体積</div><div class="v" id="mV">—</div></div>
+        <div class="meter"><div class="k">押せた力（押し返された力）</div><div class="v" id="mF">—</div></div>
+        <div class="meter"><div class="k">押し棒の加速度 a</div><div class="v" id="mA">—</div></div>
+        <div class="meter"><div class="k">豆腐の大きさ（元=100%）</div><div class="v" id="mV">—</div></div>
       </div>
       <canvas id="chart"></canvas>
-      <p class="note">押せた力 = 手の力 − mα（押し棒が加速した分は相手に届かない）</p>
+      <p class="note">押せた力 = 手の力 − 押し棒を加速させるのに使った力（ma）。緑の帯が目標の 100〜140 N。</p>
     </div>
     <div class="panel">
-      <h2>反作用の根拠</h2>
+      <h2>なぜ押し返してくれる？</h2>
       <div id="basis">—</div>
     </div>
     <div class="panel">
-      <h2>因果ログ</h2>
+      <h2>力の伝わり方ログ</h2>
       <div class="causal" id="causal"></div>
+      <div id="rules" style="margin-top:8px"></div>
     </div>
     <div class="panel">
       <h2>理論</h2>
-      <div class="formula">作用と反作用:  F(a→b) = −F(b→a)           原理2
-反作用の根拠:  ① 動かない（背後の反作用・静止摩擦）
-               ② 加速度 α で動いて −mα を返す      原理5,6
-押された力 = mα + fr + 背後の物体からの反作用
-                                   （論文 6.2 (IV-2)）
-押し棒:  M dv/dt = F_手 − F_相手          (3-3)</div>
-      <p class="note">論文 3.2：「のれんや豆腐を 100N の力で押すことはできない」。押す力の大きさは押す側だけでは決まらず、相手が返せる反作用で決まる（大局的因果性）。</p>
+      <div class="formula">押した力 = 押し返された力（向きは逆）</div>
+      <p class="note">つまり、相手が押し返してくれないと、自分も強く押せない（作用・反作用の法則）。</p>
+      <div class="formula">F = m a</div>
+      <p class="note">つまり、相手が逃げる（加速する）なら、押し返す力は「相手の重さ×加速度」の分しかない。軽いのれんはほとんど押し返さない。</p>
+      <details class="adv">
+        <summary>発展：論文の考え方</summary>
+        <div class="formula">押された力 = ma + 摩擦 + 後ろの物からの押し返し</div>
+        <p class="note">溝口ら（2016）は「押し返す力には根拠がいる」と考えた。根拠は ① 動かない（後ろの壁や摩擦が支える） ② 加速して動く、のどちらか。豆腐やのれんを壁に押しつけると、押し返しているのは本当は後ろの壁で、豆腐やのれんは力を伝えているだけになる。</p>
+      </details>
     </div>
-    <p class="ref">参照: 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 — 3.2, 4.2 原理 2・5・6・8, 4.3 b.1, 6.2 (II)〜(IV-2)／ 小原「力学A 第3章 剛体」3.1, 3.4</p>
+    <p class="ref">参考: 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 — 3.2・4.2・6.2／ 小原「力学A 第3章 剛体」3.1</p>
   </aside>
 </main>
 
@@ -99,10 +113,11 @@ if (window.Tone) RV.libOk('Tone.js');
 const stage = RV.$('#stage');
 const kBadge = RV.kappaBadge(stage);
 const log = RV.causal('#causal');
+RV.rulesList('#rules', [1, 2, 4, 5, 6, 8]);
 const LEVELS = [
-  { kappa: 1.00, lst: 1.0, pr: 150, note: '剛性の残る世界。豆腐もほとんど変形しない。' },
-  { kappa: 0.35, lst: 0.35, pr: 30, note: '剛性 35%。豆腐はつぶれながら押し返す。' },
-  { kappa: 0.08, lst: 0.08, pr: 15, note: '剛性 8%。豆腐はほぼ液体のように逃げる。' }
+  { kappa: 1.00, lst: 1.0, pr: 150, note: 'まだかたさが残る世界。豆腐もほとんど形が変わらない。' },
+  { kappa: 0.35, lst: 0.35, pr: 30, note: 'かたさ 35%。豆腐はつぶれながら押し返す。' },
+  { kappa: 0.08, lst: 0.08, pr: 15, note: 'かたさ 8%。豆腐はほとんど水のようにぐにゃりと逃げる。' }
 ];
 const NAMES = { wall: '壁', tofu: '豆腐', noren: 'のれん' };
 const F_MIN = 100, F_MAX = 140, HOLD = 1.0;
@@ -310,7 +325,7 @@ function rebuild() {
   kBadge.set(LEVELS[level].kappa);
   RV.$('#levelNote').textContent = LEVELS[level].note;
   log.reset();
-  log.add(`相手：${NAMES[target]}。押し棒（剛体）は ${M_PUSH} kg、手はばねで目標位置へ引く。`, [], { t: 0 });
+  log.add(`相手：${NAMES[target]}。押し棒（かたい物）は ${M_PUSH} kg。`, [], { t: 0 });
   refreshTargets();
 }
 function refreshTargets() {
@@ -324,19 +339,19 @@ function classify(front) {
   const touchWall = front > WALL_X - 0.012;
   const n = softTouching(W, front);
   const gap = WALL_X - front; // 押し棒と壁のすき間（＝はさまれた物の厚み）
-  if (target === 'tofu' && touchWall && n === 0) return ['escaped', '豆腐はつぶれて押し棒の脇へ逃げた。押し棒は壁に直接当たっている（豆腐は反作用を返せなかった）', [5, 6]];
+  if (target === 'tofu' && touchWall && n === 0) return ['escaped', '豆腐はつぶれて押し棒の横へ逃げた。押し棒は壁に直接当たっている（豆腐は押し返せなかった）', [5, 6]];
   if (target === 'tofu' && n > 0) {
-    if (gap < 0.2 && st.Fc > 40) return ['through', `豆腐が厚さ ${(gap * 100).toFixed(0)} cm までつぶれ、背後の壁の反作用が豆腐を通って返る（豆腐は伝えるだけ）`, [6, 8, 9]];
-    if (st.Fc > 40 && W.vol > 0.88) return ['stiff', '豆腐がほとんど変形せずに押し返す → 剛体に近い物体は力をそのまま背後の壁へ伝える', [4, 6, 8]];
-    if (st.Fc > 40) return ['squash', `豆腐が体積 ${(W.vol * 100).toFixed(0)}% までつぶれながら押し返す → 反作用の根拠は「つぶれ」（弾性と内圧）`, [5]];
-    return ['squash0', '豆腐がつぶれて逃げる → 返せる反作用は「つぶれ（弾性・圧力）」の分だけ', [5]];
+    if (gap < 0.2 && st.Fc > 40) return ['through', `豆腐が厚さ ${(gap * 100).toFixed(0)} cm までつぶれた。押し返しているのは後ろの壁で、豆腐は力を伝えているだけ`, [6, 8, 9]];
+    if (st.Fc > 40 && W.vol > 0.88) return ['stiff', '豆腐がほとんどつぶれずに押し返す → かたい物は力をそのまま後ろの壁へ伝える', [4, 6, 8]];
+    if (st.Fc > 40) return ['squash', `豆腐が ${(W.vol * 100).toFixed(0)}% の大きさまでつぶれながら押し返す → 押し返せるのは「つぶれて耐えている」から`, [5]];
+    return ['squash0', '豆腐がつぶれて逃げる → 押し返せるのは、つぶれて耐えている分だけ', [5]];
   }
   if (target === 'noren' && (n > 0 || touchWall)) {
-    if (gap < 0.06 && st.Fc > 20) return ['through', 'のれんが壁に押しつけられた → 背後の壁が反作用を返し、のれんはそれを伝えるだけ', [6, 8, 9]];
-    return ['moves', 'のれんは αで動いて逃げる → 返る反作用は −mα（軽いので小さい）。空中ののれんは 100N では押せない', [1, 5]];
+    if (gap < 0.06 && st.Fc > 20) return ['through', 'のれんが壁に押しつけられた → 押し返しているのは後ろの壁で、のれんは力を伝えているだけ', [6, 8, 9]];
+    return ['moves', 'のれんは押されると動いて逃げる → 軽いので押し返す力はとても小さい。空中ののれんは 100 N では押せない', [1, 5]];
   }
-  if (touchWall && Math.abs(st.Fc) > 3) return ['wall', '壁は地面に固定され動かない → 受けた作用と等しい反作用を返す', [2, 6, 7, 8]];
-  if (Math.abs(st.a) > 0.5 || Math.abs(st.v) > 0.05) return ['free', '押し棒は何にも触れていない → 手の力は押し棒自身の加速 mα に使われる', [1, 5]];
+  if (touchWall && Math.abs(st.Fc) > 3) return ['wall', '壁は地面にくっついていて動かない → 押した分だけ押し返してくれる', [2, 6, 7, 8]];
+  if (Math.abs(st.a) > 0.5 || Math.abs(st.v) > 0.05) return ['free', '押し棒はまだ何にも触れていない → 手の力は押し棒を動かす（加速させる）ことに使われている', [1, 5]];
   return ['idle', '静止中', []];
 }
 
@@ -375,7 +390,7 @@ function step(dt) {
   const [kind, text, pr] = classify(st.x);
   st.basis = text;
   if (kind !== st.lastBasis && kind !== 'idle') { log.add(text, pr, { t: st.t, arrow: true }); st.lastBasis = kind; }
-  if (st.Fc > F_MAX && !st.toldOver) { st.toldOver = true; log.add(`押しすぎ（${st.Fc.toFixed(0)} N）：範囲 ${F_MIN}〜${F_MAX} N に戻せ`, [], { t: st.t }); }
+  if (st.Fc > F_MAX && !st.toldOver) { st.toldOver = true; log.add(`押しすぎ（${st.Fc.toFixed(0)} N）：${F_MIN}〜${F_MAX} N に戻そう`, [], { t: st.t }); }
   if (st.Fc < F_MAX) st.toldOver = false;
   if (st.hold >= HOLD) clearTarget();
   st.hist.push(st.Fc); if (st.hist.length > 480) st.hist.shift();
@@ -394,19 +409,19 @@ function clearTarget() {
   const stars = n;
   RV.saveStars('c6', stars);
   const lessons = {
-    wall: '壁は動かない（地面に固定）ので、手が押した分だけ反作用を返せる。押す力は「相手が返せる反作用」で決まる（原理5・6・8）。',
+    wall: '壁は地面にくっついて動かないので、押した分だけ押し返してくれる。だから強く押せた。「どれだけ強く押せるか」は、相手がどれだけ押し返せるかで決まる。',
     tofu: (WALL_X - st.x) < 0.2
-      ? `豆腐は厚さ ${((WALL_X - st.x) * 100).toFixed(0)} cm（元は 40 cm）までつぶれた。100 N を返したのは豆腐ではなく背後の壁で、豆腐はそれを伝えたにすぎない（論文 6.2 IV-2）。剛体なら力は瞬時に伝わる（原理4）が、豆腐は「つぶれ切る」まで力を伝えられない。`
-      : `豆腐はほとんどつぶれずに 100 N を返した。剛性が高いと、物体は変形せずに力を背後へ伝える（原理4）。`,
-    noren: '空中ののれんは押されると動いて逃げ、−mα（とても小さい）しか返せない。壁まで押しつけて初めて、壁の反作用で 100 N を「押せた」。'
+      ? `豆腐は厚さ ${((WALL_X - st.x) * 100).toFixed(0)} cm（元は 40 cm）までつぶれた。100 N を押し返したのは豆腐ではなく後ろの壁で、豆腐は力を伝えただけ。かたい物なら力は一瞬で伝わるが、豆腐はつぶれきるまで力を伝えられない。`
+      : `豆腐はほとんどつぶれずに 100 N を押し返した。かたい物は形を変えずに、力をそのまま後ろへ伝える。`,
+    noren: '空中ののれんは押すとすぐ動いて逃げるので、ほとんど押し返さない（「のれんに腕押し」）。壁まで押しつけて、壁が押し返してくれたので、はじめて 100 N で押せた。'
   };
   if (n === 3) RV.sfx.win();
   RV.modal(`${NAMES[target]}クリア　${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}`,
     `<p>${lessons[target]}</p>
      <table style="width:100%;font-family:var(--mono);font-size:13px">
-       <tr><td>押せた力（反作用）</td><td>${st.Fc.toFixed(1)} N</td></tr>
+       <tr><td>押せた力（押し返された力）</td><td>${st.Fc.toFixed(1)} N</td></tr>
        <tr><td>手が出そうとした力</td><td>${st.Fh.toFixed(1)} N</td></tr>
-       <tr><td>レベル</td><td>κ = ${LEVELS[level].kappa.toFixed(2)}</td></tr>
+       <tr><td>レベル（かたさ）</td><td>κ = ${LEVELS[level].kappa.toFixed(2)}</td></tr>
        <tr><td>このレベルで達成</td><td>${n} / 3</td></tr>
      </table>
      <p class="note">${n < 3 ? '残りの相手にも挑戦しよう。' : 'このレベルの相手をすべて押し切った。'}</p>`,
@@ -474,10 +489,10 @@ rebuild();
 window.__c6 = { st, LEVELS, get W() { return W; }, setTarget(t) { target = t; rebuild(); }, setLevel(l) { level = l; rebuild(); } };
 
 RV.modal('第6章　豆腐を100Nで押せ',
-  `<p>世界から剛体が消え、残った剛体はあなたの手にある<b>押し棒</b>だけになった。</p>
-   <p>「力 F で押す」とよく言う。だが本当は、押そうとした相手から大きさ F の反作用が返ってきて、はじめて F で押せたことになる。<b>のれんや豆腐を 100 N で押すことはできない</b>（溝口ら 2016）。</p>
-   <p><b>目的：</b>壁・豆腐・のれんを、それぞれ 100〜140 N で 1 秒間押し続けよ。押せた力は「手の力 − 押し棒の mα」で測られる。相手が反作用を返す<b>根拠</b>は何か——動かないことか、αで動くことか、背後の壁か。</p>
-   <p class="note">操作：→ / Space（押す）、←（引く）、または右の「押す」「引く」ボタンを押し続ける。</p>`,
+  `<p>世界から剛体が消え、残った剛体はあなたの手にある<b>押し棒</b>ただ一本になった。</p>
+   <p><b>やること：</b>壁・豆腐・のれんを、それぞれ 100〜140 N の力で 1 秒間押し続けろ。</p>
+   <p><b>操作：</b>→ / Space（または「押す」ボタン）を押し続けると手が前へ、←で引く。右の「押せた力」が緑の帯に入ったら、そのまま 1 秒キープ。</p>
+   <p class="note">押すと必ず同じ大きさで押し返される（作用・反作用）。押し返してくれない相手は強く押せない——<b>「のれんに腕押し」</b>。どうすれば押し返してもらえるか考えよう。</p>`,
   [{ label: 'はじめる', primary: true }]);
 </script>
 </body>

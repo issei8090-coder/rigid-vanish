@@ -7,38 +7,66 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="shared/common.css">
 <style>
-  .hub { display: grid; grid-template-columns: minmax(0, 1fr) 420px; min-height: 100vh; }
-  .hub-left { position: relative; overflow: hidden; background: radial-gradient(ellipse at 40% 40%, #141b24 0%, #0a0d10 70%); }
-  #graph { width: 100%; height: 100%; display: block; touch-action: none; }
-  .hub-title { position: absolute; left: 24px; top: 20px; z-index: 2; pointer-events: none; max-width: 560px; }
-  .hub-title h1 { font-size: 40px; margin: 0; letter-spacing: .08em; }
-  .hub-title h1 span { color: var(--accent); }
-  .hub-title p { color: var(--muted); margin: 6px 0 0; }
+  .hub { display: grid; grid-template-columns: minmax(0, 1fr) 440px; min-height: 100vh; }
+  .hub-left { position: relative; overflow: hidden; background: radial-gradient(ellipse at 45% 45%, #15202b 0%, #0a0d11 68%); }
+  .hub-left::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .35;
+    background-image: linear-gradient(#1a222c 1px, transparent 1px), linear-gradient(90deg, #1a222c 1px, transparent 1px);
+    background-size: 40px 40px; mask-image: radial-gradient(ellipse at 50% 50%, #000 20%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 20%, transparent 70%);
+  }
+  #graph { position: relative; width: 100%; height: 100%; display: block; touch-action: none; }
+  .hub-title { position: absolute; left: 28px; top: 24px; z-index: 2; pointer-events: none; max-width: 560px; }
+  .hub-title .kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .3em; color: var(--muted); }
+  .hub-title h1 { font-size: 46px; margin: 2px 0 0; letter-spacing: .1em; line-height: 1.15; text-shadow: 0 4px 24px rgba(0,0,0,.6); }
+  .hub-title h1 span { color: var(--accent); text-shadow: 0 0 28px rgba(255,122,69,.35); }
+  .hub-title p { color: #b4c0ce; margin: 8px 0 0; font-size: 15px; }
   .hub-ctrl {
-    position: absolute; left: 24px; bottom: 20px; z-index: 2; width: min(420px, calc(100% - 48px));
-    background: rgba(27,34,43,.9); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+    position: absolute; left: 28px; bottom: 24px; z-index: 2; width: min(440px, calc(100% - 56px));
+    background: rgba(20,26,34,.82); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--line2); border-radius: 14px; padding: 12px 16px; box-shadow: 0 12px 36px rgba(0,0,0,.45);
   }
-  .hub-ctrl .meters { grid-template-columns: repeat(3, 1fr); margin-top: 6px; }
-  .hub-right { border-left: 1px solid var(--line); background: var(--bg2); padding: 18px; overflow-y: auto; max-height: 100vh; }
-  .hub-right h2 { font-size: 13px; color: var(--muted); letter-spacing: .08em; margin: 18px 0 8px; }
-  .story { font-size: 14px; }
-  .story em { color: var(--accent); font-style: normal; }
+  .hub-ctrl .row label { color: var(--fg); font-weight: 600; }
+  .hub-ctrl .meters { grid-template-columns: repeat(3, 1fr); margin-top: 8px; }
+  .hub-right { border-left: 1px solid var(--line); background: var(--bg2); padding: 22px 22px 32px; overflow-y: auto; max-height: 100vh; }
+  .hub-right > h2 { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); letter-spacing: .12em; margin: 26px 0 10px; }
+  .hub-right > h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .hub-right .panel h2 { margin-top: 0; }
+  .story { font-size: 14px; line-height: 1.85; }
+  .story p:first-child { font-size: 16px; font-weight: 700; margin-top: 0; }
+  .story blockquote {
+    margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
+    background: rgba(255,122,69,.07);
+  }
+  .story em { color: #ffa07a; font-style: normal; }
+  .progress { height: 6px; border-radius: 6px; background: #222a35; overflow: hidden; margin: -2px 0 12px; }
+  .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--warn), var(--accent)); transition: width .6s; }
   .card {
-    display: grid; grid-template-columns: 54px 1fr auto; gap: 10px; align-items: center;
-    padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px;
-    text-decoration: none; color: var(--fg); background: var(--panel); transition: border-color .15s, transform .15s;
+    position: relative; display: grid; grid-template-columns: 58px 1fr auto; gap: 12px; align-items: center;
+    padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px;
+    text-decoration: none; color: var(--fg); background: linear-gradient(180deg, var(--panel2), var(--panel));
+    transition: border-color .18s, transform .18s, box-shadow .18s;
   }
-  .card:hover { border-color: var(--accent); transform: translateX(2px); }
-  .card .no { font-family: var(--mono); color: var(--accent); font-size: 12px; }
-  .card .ttl { font-weight: 700; }
-  .card .sub { font-size: 12px; color: var(--muted); }
-  .card .libs { font-family: var(--mono); font-size: 10.5px; color: #6f8fa8; margin-top: 2px; }
-  .card .st { color: var(--warn); font-size: 13px; letter-spacing: 1px; }
-  .total { font-family: var(--mono); color: var(--warn); }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,.35), 0 0 0 1px rgba(255,122,69,.2); }
+  .card .no {
+    font-family: var(--mono); color: var(--accent); font-size: 11.5px; text-align: center;
+    padding: 6px 0; border-radius: 8px; background: rgba(255,122,69,.09); border: 1px solid rgba(255,122,69,.2);
+  }
+  .card.lab .no { color: var(--rigid); background: rgba(92,200,255,.08); border-color: rgba(92,200,255,.2); }
+  .card .ttl { font-weight: 700; font-size: 15px; }
+  .card .sub { font-size: 12.5px; color: #aab6c4; }
+  .card .libs { font-family: var(--mono); font-size: 10.5px; color: #64819a; margin-top: 3px; }
+  .card .st { color: var(--warn); font-size: 14px; letter-spacing: 1px; }
+  .card.done { border-color: #4a4128; }
+  .card .next {
+    position: absolute; right: 12px; top: -9px; font-size: 10.5px; font-weight: 700; color: #1a0d06;
+    background: var(--accent); padding: 1px 8px; border-radius: 999px; box-shadow: 0 3px 10px rgba(255,122,69,.4);
+  }
+  .total { font-family: var(--mono); color: var(--warn); letter-spacing: .05em; }
   @media (max-width: 900px) {
     .hub { grid-template-columns: 1fr; }
     .hub-left { height: 72vh; }
-    .hub-title h1 { font-size: 28px; }
+    .hub-title h1 { font-size: 32px; }
     .hub-right { border-left: 0; border-top: 1px solid var(--line); max-height: none; }
   }
 </style>
@@ -47,20 +75,21 @@
 <div class="hub">
   <div class="hub-left">
     <div class="hub-title">
+      <div class="kicker">RIGID VANISH</div>
       <h1>剛体<span>消失</span></h1>
-      <p>任意の2質点間の距離が、もう一定ではない世界で。</p>
+      <p>「かたい物」がこの世から消えたら、何が起こる？</p>
     </div>
     <svg id="graph" aria-label="剛体の定義を確かめる質点系"></svg>
     <div class="hub-ctrl">
       <div class="row">
-        <label for="k">世界の剛性 κ</label>
+        <label for="k">世界のかたさ κ</label>
         <input type="range" id="k" min="0" max="1" step="0.01" value="1">
         <span class="val" id="kv">1.00</span>
       </div>
-      <div class="note">点をドラッグして揺さぶってみてください。κ=1 では三角形 PQR の辺の長さが保たれ、κ を下げると形が崩れます。</div>
+      <div class="note">点をドラッグして揺さぶってみよう。κ=1（かたい）なら三角形 PQR の形はくずれません。κ を下げるとぐにゃぐにゃになります。</div>
       <div class="meters">
-        <div class="meter"><div class="k">自由度</div><div class="v" id="dof">3</div></div>
-        <div class="meter"><div class="k">距離ばらつき</div><div class="v" id="dev">0.0%</div></div>
+        <div class="meter"><div class="k">動き方の数</div><div class="v" id="dof">3</div></div>
+        <div class="meter"><div class="k">長さのずれ</div><div class="v" id="dev">0.0%</div></div>
         <div class="meter"><div class="k">状態</div><div class="v" id="state" style="font-size:13px">剛体</div></div>
       </div>
     </div>
@@ -69,11 +98,31 @@
   <aside class="hub-right">
     <div class="story">
       <p>ある朝、物理学の教科書から一行が消えた。</p>
-      <p><em>「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」</em>──剛体の定義である。</p>
-      <p>それ以来、力は一瞬では伝わらなくなり、慣性モーメントは定まらず、こまは裂け、振り子は重力加速度を測れなくなった。あなたは最後の観測者として、崩れていく世界の物理を確かめにいく。</p>
+      <blockquote><em>「質点系において、すべての任意の2質点間の距離が運動を通して一定であるもの」</em>──剛体の定義である。<br><span class="note">（ふつうの言葉にすると「どの2点の間の長さも、ずっと変わらない物」）</span></blockquote>
+      <p>それ以来、押した力は一瞬では伝わらなくなり、ボールはうまく転がらず、こまは回しすぎると裂け、振り子では重力の強さも測れなくなった。あなたは最後の観測者として、くずれていく世界を確かめにいく。</p>
+    </div>
+
+    <div class="panel easy" style="margin-top:12px">
+      <h2>剛体（ごうたい）ってなに？</h2>
+      <dl>
+        <dt>ひとことで</dt><dd>どれだけ押しても引いても、<b>形が少しも変わらない物</b>のこと。物理の教科書は、石やボールをこの「理想のかたい物」として考えます。</dd>
+        <dt>本当は？</dt><dd>現実の物はほんの少しだけ縮んだり曲がったりします。このゲームでは、その「少し」を大きくしていったら世界がどう変わるかを体験します。</dd>
+        <dt>κ（カッパ）</dt><dd>このゲームでの「かたさ」の目盛り。<b>1 = 完全にかたい</b>、0 に近いほどやわらかい。</dd>
+      </dl>
+    </div>
+
+    <div class="panel mission" style="margin-top:10px">
+      <h2>遊び方（3ステップ）</h2>
+      <ol style="margin:0;padding-left:20px;font-size:13px">
+        <li><b>まず左の図で練習</b>：κ を下げて点を引っぱり、「かたさが消える」感覚をつかむ。</li>
+        <li><b>章を選ぶ</b>：どの章も「かたい世界（κ=1）」から始まり、レベルが上がるほどやわらかくなる。</li>
+        <li><b>ミッションに挑む</b>：画面右側の「やること」を読んで操作 → 結果画面で「なぜ？」を確認して★を集める。</li>
+      </ol>
+      <p class="note" style="margin-top:6px">迷ったら第1章「押した力が届かない」からどうぞ。</p>
     </div>
 
     <h2>章 <span class="total" id="total"></span></h2>
+    <div class="progress"><i id="prog" style="width:0"></i></div>
     <div id="cards"></div>
 
     <h2>参考文献</h2>
@@ -94,24 +143,27 @@
 (function () {
   'use strict';
   const CHAPTERS = [
-    { id: 'c1', no: '第1章', href: 'chapters/c1-propagation.html', t: '透過伝達性の喪失', s: '押した力が、向こう端に届くまで', libs: 'Rapier2D · Chart.js · Tone.js' },
-    { id: 'c2', no: '第2章', href: 'chapters/c2-rolling.html', t: '転がれない円柱', s: '加速度 ⅔g sinα が崩れるとき', libs: 'Planck.js · Chart.js' },
-    { id: 'c3', no: '第3章', href: 'chapters/c3-pendulum.html', t: '可逆振り子で g を測れ', s: 'I が一定でない振り子', libs: 'p2.js · odex · Chart.js' },
-    { id: 'c4', no: '第4章', href: 'chapters/c4-percussion.html', t: '打撃の中心', s: '撞く高さ h = 3a/2 の意味', libs: 'Matter.js' },
-    { id: 'c5', no: '第5章', href: 'chapters/c5-top.html', t: 'こまは倒れる', s: '歳差運動と、遠心力で裂けるこま', libs: 'three.js · cannon-es · odex' },
-    { id: 'c6', no: '第6章', href: 'chapters/c6-tofu.html', t: '豆腐を100Nで押せ', s: '反作用には根拠がいる', libs: 'three.js · Ammo.js (Bullet)' },
-    { id: 'c7', no: '終章', href: 'chapters/c7-zero.html', t: '剛体ゼロ', s: '最後の剛体を融ける前に運べ', libs: 'LiquidFun · gpu.js' },
-    { id: 'lab', no: '実験室', href: 'chapters/lab-engines.html', t: 'エンジン総当たり', s: '6つの物理エンジンの「剛体観」を比べる', libs: 'Matter · Planck · p2 · Rapier · toxiclibs · Oimo' }
+    { id: 'c1', no: '第1章', href: 'chapters/c1-propagation.html', t: '押した力が届かない', s: '押した力は、すぐ向こう端に届く？', libs: 'Rapier2D · Chart.js · Tone.js' },
+    { id: 'c2', no: '第2章', href: 'chapters/c2-rolling.html', t: '転がれない円柱', s: '坂を転がるボールと、ぐにゃぐにゃのタイヤ', libs: 'Planck.js · Chart.js' },
+    { id: 'c3', no: '第3章', href: 'chapters/c3-pendulum.html', t: '振り子で重力を測れ', s: '振り子のリズムから重力の強さを測る', libs: 'p2.js · odex · Chart.js' },
+    { id: 'c4', no: '第4章', href: 'chapters/c4-percussion.html', t: 'ボールのどこを突く？', s: 'ボールのどこを突けばきれいに転がる？', libs: 'Matter.js' },
+    { id: 'c5', no: '第5章', href: 'chapters/c5-top.html', t: 'こまは倒れる', s: '首ふりするこまと、回しすぎて裂けるこま', libs: 'three.js · cannon-es · odex' },
+    { id: 'c6', no: '第6章', href: 'chapters/c6-tofu.html', t: '豆腐を100Nで押せ', s: 'のれんに腕押し、を確かめる', libs: 'three.js · Ammo.js (Bullet)' },
+    { id: 'c7', no: '終章', href: 'chapters/c7-zero.html', t: '剛体ゼロ', s: '最後のかたい物を、とける前に運べ', libs: 'LiquidFun · gpu.js' },
+    { id: 'lab', no: '実験室', href: 'chapters/lab-engines.html', t: 'エンジン総当たり', s: '6つの物理エンジンで同じ積み木をくずす', libs: 'Matter · Planck · p2 · Rapier · toxiclibs · Oimo' }
   ];
   const prog = RV.loadProgress();
   let total = 0;
+  const nextId = (CHAPTERS.find(c => c.id !== 'lab' && !prog[c.id]) || {}).id;
   document.getElementById('cards').innerHTML = CHAPTERS.map(c => {
     const n = prog[c.id] || 0; total += n;
-    return `<a class="card" href="${c.href}"><span class="no">${c.no}</span>` +
+    const cls = 'card' + (c.id === 'lab' ? ' lab' : '') + (n === 3 ? ' done' : '');
+    return `<a class="${cls}" href="${c.href}">${c.id === nextId ? '<span class="next">次はここ</span>' : ''}<span class="no">${c.no}</span>` +
       `<span><div class="ttl">${c.t}</div><div class="sub">${c.s}</div><div class="libs">${c.libs}</div></span>` +
       `<span class="st">${'★'.repeat(n)}${'☆'.repeat(3 - n)}</span></a>`;
   }).join('');
   document.getElementById('total').textContent = `★ ${total} / ${CHAPTERS.length * 3}`;
+  document.getElementById('prog').style.width = (total / (CHAPTERS.length * 3) * 100) + '%';
   document.getElementById('libs-all').textContent =
     'Matter.js 0.19 / Planck.js 1.0 / p2.js 0.7.1 / Rapier2D 0.14 (WASM) / cannon-es 0.20 / Ammo.js (Bullet, WASM) / Oimo.js 1.0.9 / LiquidFun (WASM) / toxiclibs.js 0.3.3 / three.js 0.160 / d3 7.9 / Chart.js 4.4 / Tone.js 14.7 / odex 3.0 / gpu.js 2.16';
 
@@ -198,7 +250,7 @@
     // 2D: 剛体なら自由度3（並進2+回転1）。崩れたら 2N。
     document.getElementById('dof').textContent = rigid ? '3' : String(2 * nodes.length);
     const st = document.getElementById('state');
-    st.textContent = rigid ? '剛体' : devMax < 0.15 ? '弾性体' : '質点系';
+    st.textContent = rigid ? 'かたい物' : devMax < 0.15 ? 'ゴムっぽい' : 'バラバラ';
     st.style.color = rigid ? 'var(--rigid)' : 'var(--accent)';
   });
 

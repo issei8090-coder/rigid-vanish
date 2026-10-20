@@ -19,11 +19,22 @@
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
-      <p>斜面の角度 <b>α</b> と摩擦係数 <b>μ</b> を決めて円柱を放ち、砂地の<b>目標ゾーン</b>（緑）の中で止めよ。</p>
-      <p class="note">止まった位置が中心に近いほど★が増える。レベルが上がると円柱が「剛体でなくなる」。</p>
+      <p>坂の角度 <b>α</b> と、すべりにくさ <b>μ</b>（摩擦係数）を決めて円柱を転がし、砂地の<b>緑のゾーン</b>の中で止めよ。</p>
+      <p class="note">緑の線に近いほど★が増える。レベルが上がると、円柱がだんだん「やわらかく」なる。</p>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>坂を転がる円柱は、同じ坂をすべり落ちる箱より<b>ゆっくり</b>加速する（加速度は箱の 2/3）。</dd>
+        <dt>なぜ？</dt>
+        <dd>高さが下がって生まれたエネルギーの 1/3 が「回る」ことに使われ、前に進む分が減るから。やわらかい円柱は、つぶれるたびにエネルギーが熱になって逃げる。</dd>
+        <dt>身近な例</dt>
+        <dd>空気の抜けた自転車のタイヤは重くて進みにくい。タイヤがつぶれるたびにエネルギーを失っているから。</dd>
+      </dl>
     </div>
     <div class="panel">
-      <h2>レベル（剛性 κ）</h2>
+      <h2>レベル（かたさ κ：1=かたい、0に近いほどやわらかい）</h2>
       <div class="seg" id="levels">
         <button data-l="0" class="on">L1 κ=1.00</button><button data-l="1">L2 κ=0.35</button><button data-l="2">L3 κ=0.08</button>
       </div>
@@ -31,11 +42,11 @@
     </div>
     <div class="panel">
       <h2>操作</h2>
-      <div class="row"><label>斜面角 α</label><input type="range" id="alpha" min="8" max="60" step="0.5" value="25"><span class="val" id="alpha-v"></span></div>
-      <div class="row"><label>摩擦 μ</label><input type="range" id="mu" min="0.05" max="1" step="0.01" value="0.5"><span class="val" id="mu-v"></span></div>
+      <div class="row"><label>坂の角度 α</label><input type="range" id="alpha" min="8" max="60" step="0.5" value="25"><span class="val" id="alpha-v"></span></div>
+      <div class="row"><label>すべりにくさ μ</label><input type="range" id="mu" min="0.05" max="1" step="0.01" value="0.5"><span class="val" id="mu-v"></span></div>
       <p class="note" id="slipnote"></p>
       <div class="btns">
-        <button class="btn primary" id="go">放つ</button>
+        <button class="btn primary" id="go">転がす</button>
         <button class="btn" id="reset">置き直す</button>
       </div>
     </div>
@@ -43,36 +54,45 @@
       <h2>計測</h2>
       <div class="meters">
         <div class="meter"><div class="k">経過時間 t</div><div class="v" id="m-t">0.00 s</div></div>
-        <div class="meter"><div class="k">中心の速さ v</div><div class="v" id="m-v">0.00 m/s</div></div>
-        <div class="meter"><div class="k">斜面での加速度（実測）</div><div class="v" id="m-a">—</div></div>
-        <div class="meter"><div class="k">理論 (2/3)g sinα</div><div class="v" id="m-at">—</div></div>
-        <div class="meter"><div class="k">滑り速度 u</div><div class="v" id="m-u">—</div></div>
+        <div class="meter"><div class="k">速さ v</div><div class="v" id="m-v">0.00 m/s</div></div>
+        <div class="meter"><div class="k">坂での加速度（実測）</div><div class="v" id="m-a">—</div></div>
+        <div class="meter"><div class="k">理論（すべる箱の 2/3）</div><div class="v" id="m-at">—</div></div>
+        <div class="meter"><div class="k">すべっている速さ u</div><div class="v" id="m-u">—</div></div>
         <div class="meter"><div class="k">停止位置（砂地から）</div><div class="v" id="m-stop">—</div></div>
       </div>
-      <p class="note" style="margin-top:8px">斜面下端でのエネルギー配分（失った位置エネルギーに対する割合）</p>
+      <p class="note" style="margin-top:8px">坂の下でのエネルギーの行き先（高さが下がった分のエネルギーを100%として）</p>
       <div class="ebar" id="ebar"><i style="background:#5cc8ff;width:0"></i><i style="background:#c792ea;width:0"></i><i style="background:#ff7a45;width:0"></i></div>
-      <div class="legend"><span style="--c:#5cc8ff" id="lg-t">並進 —</span><span style="--c:#c792ea" id="lg-r">回転・内部 —</span><span style="--c:#ff7a45" id="lg-d">散逸 —</span></div>
-      <p class="note">剛体・滑りなしなら 並進 2/3 : 回転 1/3（教科書 式3-64 の後）。</p>
+      <div class="legend"><span style="--c:#5cc8ff" id="lg-t">前に進む —</span><span style="--c:#c792ea" id="lg-r">回る・ゆれる —</span><span style="--c:#ff7a45" id="lg-d">熱で消えた —</span></div>
+      <p class="note">かたい円柱がすべらずに転がると「進む 2/3 : 回る 1/3」になる。</p>
     </div>
     <div class="panel">
-      <h2>斜面上の移動距離 s(t)</h2>
+      <h2>坂を下った距離 s と時間 t</h2>
       <div id="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
     <div class="panel">
-      <h2>因果ログ</h2>
+      <h2>力の伝わり方（因果ログ）</h2>
       <div class="causal" id="causal"></div>
+      <p class="note" style="margin:8px 0 2px">ログに出てくるルール：</p>
+      <div id="rules"></div>
     </div>
     <div class="panel">
-      <h2>理論（剛体の平面運動）</h2>
-<div class="formula">滑らない (tanα &lt; 3μ0)  … (3-65)
-  M ẍ = Mg sinα − F,  I ω̇ = aF,  I = Ma²/2   (3-59)
+      <h2>理論</h2>
+<div class="formula">すべらずに転がるとき：  a = (2/3) g sinα</div>
+      <p class="note">つまり… 同じ坂をすべり落ちる箱（a = g sinα）の 2/3 の加速度になる。</p>
+<div class="formula">すべらない条件：  tanα &lt; 3μ</div>
+      <p class="note">つまり… 坂が急すぎたり、すべりやすかったりすると、円柱はすべりながら転がる。</p>
+      <details class="adv">
+        <summary>発展：教科書の式</summary>
+<div class="formula">運動方程式  M ẍ = Mg sinα − F,  I ω̇ = aF,  I = Ma²/2   (3-59)
   ẍ = (2/3) g sinα                         (3-62)
   x = (1/3) g t² sinα                      (3-63)
-  F = (1/3) Mg sinα
-滑りつつ転がる (tanα &gt; 3μ0)
+  摩擦力 F = (1/3) Mg sinα
+すべりつつ転がる (tanα &gt; 3μ)
   ẍ = g(sinα − μ cosα),  ω̇ = 2μg cosα / a  (3-66)
   u = ẋ − aω = gt(sinα − 3μ cosα)          (3-67)</div>
-      <p class="note">κ&lt;1 の円柱は外周の小円16個と中心を「ばね（DistanceJoint）」で結んだもの。2点間の距離が一定でない＝剛体ではない。</p>
+        <p class="note">I は「回りにくさ（慣性モーメント）」。円柱なら Ma²/2 という決まった値になる。</p>
+      </details>
+      <p class="note">やわらかい円柱（κ&lt;1）は、まわりの16個の小さな玉と中心を「ばね」でつないだもの。玉どうしの距離が変わる＝剛体（どの2点の距離も変わらない物体）ではない。</p>
     </div>
     <p class="ref">参照: 兵庫県立大 物理学テキスト第3章「剛体」3.7 剛体の平面運動 / 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016</p>
   </aside>
@@ -93,9 +113,9 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
   const G = 9.8, S = 5, A = 0.5, CRR = 0.25, SAND_LEN = 16, ARC_R = 2, START_S = 0.4;
   const HALF_ZONE = 0.6;
   const LEVELS = [
-    { k: 1.00, target: 9.0, note: '剛体の円柱。教科書どおり、エネルギーの1/3が回転に回る。' },
-    { k: 0.35, target: 7.5, note: '少し柔らかいタイヤ。変形するたびにエネルギーが熱に消える。' },
-    { k: 0.08, target: 7.2, note: 'ほぼ「剛体が消えた」タイヤ。形を保つことすら難しい。' }
+    { k: 1.00, target: 9.0, note: 'かたい円柱（剛体）。教科書どおり、エネルギーの1/3が「回る」ことに使われる。' },
+    { k: 0.35, target: 7.5, note: '少しやわらかいタイヤ。つぶれるたびにエネルギーが熱になって消える。' },
+    { k: 0.08, target: 7.2, note: 'ほとんどゼリーのようなタイヤ。丸い形を保つことすら難しい。' }
   ];
 
   const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
@@ -207,16 +227,16 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     for (const b of bodies) b.setAwake(true);
     log.reset();
     const rigid = LEVELS[level].k >= 1;
-    log.add(`放つ：α=${alphaDeg.toFixed(1)}°, μ=${mu.toFixed(2)}, κ=${LEVELS[level].k.toFixed(2)}`, [], { t: 0 });
-    log.add('重力の「場」が円柱の各部に作用する（場の力を原因とする）', [10, 9], { t: 0, arrow: true });
-    log.add('円柱が斜面を押す → 斜面は地面に固定され動かないので、同じ大きさの反作用を返す', [2, 7, 8], { t: 0, arrow: true });
+    log.add(`転がす：角度 α=${alphaDeg.toFixed(1)}°, すべりにくさ μ=${mu.toFixed(2)}, かたさ κ=${LEVELS[level].k.toFixed(2)}`, [], { t: 0 });
+    log.add('重力が円柱のすべての部分を下向きに引く', [9], { t: 0, arrow: true });
+    log.add('円柱が坂を押す → 坂は動かないので、同じ大きさで押し返す', [2, 7, 8], { t: 0, arrow: true });
     if (Math.tan(geom.al) < 3 * mu) {
-      log.add('接触点で静止摩擦 F が反作用として返る → 重心まわりのトルク aF → 回転が始まる', [6, 9], { t: 0, arrow: true });
+      log.add('坂との接点で摩擦力がはたらく → その力が円柱を回し始める', [6, 9], { t: 0, arrow: true });
     } else {
-      log.add('tanα > 3μ0：静止摩擦では反作用を返しきれない → 滑りながら転がる', [5, 6], { t: 0, arrow: true });
+      log.add('坂が急すぎる（tanα > 3μ）：摩擦が足りない → すべりながら転がる', [5, 6], { t: 0, arrow: true });
     }
-    if (rigid) log.add('剛体なので、接触点で受けた力は瞬時に全体へ伝わる（透過伝達性）', [4], { t: 0, arrow: true });
-    else log.add('外周の粒子が先に押され、ばねが縮んでから中心へ遅れて伝わる＝透過伝達性が成り立たない', [4, 5], { t: 0, arrow: true });
+    if (rigid) log.add('かたい円柱なので、接点で受けた力は一瞬で全体に伝わる', [4], { t: 0, arrow: true });
+    else log.add('やわらかいので、まず外側の玉が押され、ばねが縮んでから少し遅れて中心に伝わる', [4, 5], { t: 0, arrow: true });
   }
 
   // ---------- 1ステップ ----------
@@ -226,7 +246,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     if (c.x > geom.sand0 && Math.abs(c.vx) > 0.03) {
       // 砂地の転がり抵抗: 砂が −F を返す
       for (const b of bodies) b.applyForceToCenter(Vec2(-CRR * b.getMass() * G * Math.sign(c.vx), 0), true);
-      if (!flags.sand) { flags.sand = true; log.add('砂地が進行と逆向きの抵抗 −F を返す → 減速 α → 円柱は −mα を反作用として返す', [1, 2, 5], { t, arrow: true }); RV.sfx.thud(0.4); }
+      if (!flags.sand) { flags.sand = true; log.add('砂地が進む向きと逆に引きとめる → 円柱は減速する（F = ma）', [1, 2, 5], { t, arrow: true }); RV.sfx.thud(0.4); }
     }
     world.step(dt, 8, 3);
     t += dt;
@@ -242,7 +262,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
         const vt = v.x * Math.cos(al) - v.y * Math.sin(al);
         const u = vt + w * A;
         $('#m-u').textContent = u.toFixed(2) + ' m/s';
-        if (Math.abs(u) > 0.05 && !flags.slip && t > 0.05) { flags.slip = true; log.add(`滑りを検出：u = ẋ − aω = ${u.toFixed(2)} m/s（動摩擦 μMg cosα が働く）`, [5, 6], { t, arrow: true }); }
+        if (Math.abs(u) > 0.05 && !flags.slip && t > 0.05) { flags.slip = true; log.add(`すべり始めた：すべりの速さ ${u.toFixed(2)} m/s（動摩擦力がはたらく）`, [5, 6], { t, arrow: true }); }
       }
       // 斜面下端（円弧の始まり）に達した
       const tArcStart = geom.X0 - geom.tArc * Math.cos(al);
@@ -258,7 +278,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
         for (const p of samples) { num += p.s * p.t * p.t; den += p.t ** 4; }
         const aMeas = 2 * num / den;
         $('#m-a').textContent = aMeas.toFixed(2) + ' m/s²';
-        log.add(`斜面下端：並進 ${(bottomInfo.kt * 100).toFixed(0)}% / 回転・内部 ${(bottomInfo.kr * 100).toFixed(0)}% / 散逸 ${(bottomInfo.d * 100).toFixed(0)}%`, [9], { t });
+        log.add(`坂の下：進む ${(bottomInfo.kt * 100).toFixed(0)}% / 回る・ゆれる ${(bottomInfo.kr * 100).toFixed(0)}% / 熱 ${(bottomInfo.d * 100).toFixed(0)}%`, [9], { t });
         updateChart();
       }
     }
@@ -267,7 +287,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
       still += dt;
       if (still > 0.5) finish(c2.x - geom.sand0);
     } else still = 0;
-    if (c2.x > geom.xEnd - 0.7 && !flags.wall) { flags.wall = true; log.add('終端の壁に衝突', [2, 8], { t }); RV.sfx.thud(1); }
+    if (c2.x > geom.xEnd - 0.7 && !flags.wall) { flags.wall = true; log.add('いちばん奥の壁にぶつかった', [2, 8], { t }); RV.sfx.thud(1); }
     if (t > 25) finish(c2.x - geom.sand0);
   }
 
@@ -279,7 +299,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     const target = LEVELS[level].target;
     const err = Math.abs(d - target);
     $('#m-stop').textContent = d.toFixed(2) + ' m';
-    log.add(`停止：砂地から ${d.toFixed(2)} m（目標 ${target.toFixed(1)} m、誤差 ${err.toFixed(2)} m）`, [], { t });
+    log.add(`止まった：砂地から ${d.toFixed(2)} m（目標 ${target.toFixed(1)} m、誤差 ${err.toFixed(2)} m）`, [], { t });
     if (err <= HALF_ZONE) {
       const g = RV.grade(err, [0.15, 0.35, HALF_ZONE]);
       const capped = Math.min(g, level + 1); // L1 は最大★1、L2 は★2、L3 で★3
@@ -289,16 +309,17 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
       const aTh = theoryAcc();
       const aMeasTxt = $('#m-a').textContent;
       const rigid = LEVELS[level].k >= 1;
-      const ei = bottomInfo ? `並進 ${(bottomInfo.kt * 100).toFixed(0)}% / 回転・内部 ${(bottomInfo.kr * 100).toFixed(0)}% / 散逸 ${(bottomInfo.d * 100).toFixed(0)}%` : '—';
+      const ei = bottomInfo ? `進む ${(bottomInfo.kt * 100).toFixed(0)}% / 回る・ゆれる ${(bottomInfo.kr * 100).toFixed(0)}% / 熱 ${(bottomInfo.d * 100).toFixed(0)}%` : '—';
       RV.modal('ゾーン内で停止！ ' + '★'.repeat(g) + '☆'.repeat(3 - g),
-        `<p>停止位置 <b>${d.toFixed(2)} m</b>（目標 ${target.toFixed(1)} m、誤差 ${err.toFixed(2)} m）・試行 ${attempts} 回</p>
-         <p>斜面での加速度：実測 <b>${aMeasTxt}</b> ／ 剛体理論 <b>${aTh.toFixed(2)} m/s²</b></p>
-         <p>斜面下端のエネルギー配分：${ei}<br><span class="note">剛体・滑りなしの理論は 並進 67% / 回転 33% / 散逸 0%</span></p>
-         <p class="note">${rigid
-            ? '剛体では「2点間の距離が一定」なので、位置エネルギーはきれいに並進と回転に分かれる。'
-            : '剛体でないタイヤは、つぶれて戻るたびにエネルギーを散逸する。I = Ma²/2 という「固有の定数」がもう存在しない。'}</p>
-         ${level < 2 ? '<p>次のレベルでは、剛性 κ がさらに下がる。</p>' : '<p>剛体が消えると、教科書の 2/3 は成り立たない。</p>'}
-         ${g > capped ? `<p class="note">このレベルで得られる★は最大 ${level + 1} 個。</p>` : ''}`,
+        `<p>止まった位置 <b>${d.toFixed(2)} m</b>（目標 ${target.toFixed(1)} m、ずれ ${err.toFixed(2)} m）・${attempts} 回目</p>
+         <p><b>理論では：</b>かたい円柱なら坂での加速度は <b>${aTh.toFixed(2)} m/s²</b>、エネルギーは「進む 67% / 回る 33%」。<br>
+            <b>実際は：</b>加速度 <b>${aMeasTxt}</b>、エネルギーは ${ei}。</p>
+         <p>${rigid
+            ? 'かたい円柱は形が変わらないので、エネルギーがむだなく「進む」と「回る」に分かれた。'
+            : 'やわらかい円柱は、つぶれてもどるたびにエネルギーが熱になって逃げた。「回りにくさ」も形と一緒に変わってしまい、教科書の 2/3 が成り立たない。'}</p>
+         <p class="note">${rigid ? '身近な例：かたいボウリングの球が、最後まで勢いよく転がっていくのと同じ。' : '身近な例：空気の抜けた自転車のタイヤが重くて進まないのと同じ理由だ。'}</p>
+         ${level < 2 ? '<p class="note">次のレベルでは、円柱がもっとやわらかくなる。</p>' : ''}
+         ${g > capped ? `<p class="note">このレベルで取れる★は最大 ${level + 1} 個。</p>` : ''}`,
         level < 2 ? [{ label: 'もう一度', onClick: build }, { label: '次のレベルへ', primary: true, onClick: () => setLevel(level + 1) }]
                   : [{ label: 'もう一度', primary: true, onClick: build }]);
     } else {
@@ -395,16 +416,16 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     const is = $('#ebar').children;
     if (!info) {
       [...is].forEach(i => i.style.width = '0');
-      $('#lg-t').textContent = '並進 —'; $('#lg-r').textContent = '回転・内部 —'; $('#lg-d').textContent = '散逸 —';
+      $('#lg-t').textContent = '前に進む —'; $('#lg-r').textContent = '回る・ゆれる —'; $('#lg-d').textContent = '熱で消えた —';
       return;
     }
     const kt = Math.max(0, info.kt), kr = Math.max(0, info.kr), d = Math.max(0, info.d), sum = kt + kr + d || 1;
     is[0].style.width = (kt / sum * 100) + '%';
     is[1].style.width = (kr / sum * 100) + '%';
     is[2].style.width = (d / sum * 100) + '%';
-    $('#lg-t').textContent = `並進 ${(kt * 100).toFixed(0)}%`;
-    $('#lg-r').textContent = `回転・内部 ${(kr * 100).toFixed(0)}%`;
-    $('#lg-d').textContent = `散逸 ${(d * 100).toFixed(0)}%`;
+    $('#lg-t').textContent = `前に進む ${(kt * 100).toFixed(0)}%`;
+    $('#lg-r').textContent = `回る・ゆれる ${(kr * 100).toFixed(0)}%`;
+    $('#lg-d').textContent = `熱で消えた ${(d * 100).toFixed(0)}%`;
   }
 
   // ---------- グラフ ----------
@@ -416,7 +437,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     chart = new Chart($('#chart'), {
       type: 'line',
       data: { datasets: [
-        { label: '剛体理論', data: [], borderColor: '#5cc8ff', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 },
+        { label: 'かたい円柱の理論', data: [], borderColor: '#5cc8ff', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 },
         { label: '実測', data: [], borderColor: '#ff7a45', pointRadius: 0, borderWidth: 2 }
       ] },
       options: {
@@ -448,7 +469,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
     $('#mu-v').textContent = mu.toFixed(2);
     const crit = Math.atan(3 * mu) * 180 / Math.PI;
     const noSlip = Math.tan(alphaDeg * Math.PI / 180) < 3 * mu;
-    $('#slipnote').innerHTML = `滑らない条件 tanα &lt; 3μ0 → α &lt; ${crit.toFixed(1)}°：<b style="color:${noSlip ? 'var(--good)' : 'var(--bad)'}">${noSlip ? '転がる（滑らない）' : '滑りながら転がる'}</b>`;
+    $('#slipnote').innerHTML = `すべらずに転がれるのは α &lt; ${crit.toFixed(1)}° のとき：<b style="color:${noSlip ? 'var(--good)' : 'var(--bad)'}">${noSlip ? 'すべらずに転がる' : 'すべりながら転がる'}</b>`;
     $('#m-at').textContent = ((2 / 3) * G * Math.sin(alphaDeg * Math.PI / 180)).toFixed(2) + ' m/s²';
     $('#lvl-note').textContent = LEVELS[level].note;
     kb.set(LEVELS[level].k);
@@ -470,6 +491,7 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
   syncUI();
   build();
   RV.loop(step, render, 1 / 120);
+  RV.rulesList('#rules', [1, 2, 4, 6, 7, 8, 9]);
 
   // テスト・デバッグ用
   window.C2 = {
@@ -479,10 +501,10 @@ RV.header({ id: 'c2', chap: '第2章', title: '転がれない円柱', libs: ['P
   };
 
   RV.modal('第2章　転がれない円柱',
-    `<p>世界から剛体が消えつつある。教科書は言う──「質量 M、半径 a の円柱が斜面を滑らずに転がるとき、加速度は質点の <b>2/3</b>」。位置エネルギーの <b>1/3</b> が回転に使われるからだ。</p>
-     <p>だがそれは「どの2点の距離も変わらない」剛体の話。剛性 κ が下がると、円柱はつぶれ、揺れ、エネルギーを失う。</p>
-     <p><b>目的：</b>α と μ を選んで円柱を放ち、砂地の目標ゾーンで止めよ。L1 で教科書の世界を確かめ、L2・L3 で崩れゆく世界に挑む。</p>
-     <p class="note">操作：スライダーで α・μ を調整 → 「放つ」（Space キー）。</p>`,
+    `<p>世界から剛体が消えつつある。教科書は言う──「かたい円柱が坂をすべらずに転がるとき、加速度は箱がすべり落ちるときの <b>2/3</b>」。</p>
+     <p><b>やること：</b>坂の角度とすべりにくさを決めて円柱を転がし、砂地の緑のゾーンで止めろ。</p>
+     <p>坂の上からボールと箱を同時に放すと、すべる箱が先に着く。ボールはエネルギーの一部を「回る」ことに使うからだ。だが かたさ κ が下がると、円柱はつぶれ、ゆれ、エネルギーを失っていく。</p>
+     <p class="note">操作：スライダーで α・μ を動かす →「転がす」（Space）で円柱が坂を下り、砂地で止まる。止まった位置で★が決まる。</p>`,
     [{ label: 'はじめる', primary: true }]);
 })();
 </script>

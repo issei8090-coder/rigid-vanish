@@ -26,13 +26,24 @@
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション（実験室）</h2>
-      <p>6 つの物理エンジンで同じ塔（箱6段）を立てる。剛性 κ を下げながら「試験」をくり返し、<b>それぞれのエンジンが塔を支えきれなくなる κ の境目</b>を測定せよ。</p>
-      <p class="note">試験＝5 秒シミュレーションして高さが初期の 85% 以上なら合格。<br>★1: κ&lt;1 で全エンジン合格を確認　★2: 全エンジン合格の最小 κ の境目（合格 κ と 0.05 下の不合格）を確定　★3: 6 エンジンそれぞれの境目を確定</p>
+      <p>6 つの「物理エンジン」（物の動きを計算するプログラム）で、同じ積み木の塔（箱6段）を立てる。<b>かたさ κ</b> を下げながら「試験」をくり返し、<b>それぞれのエンジンで塔が立たなくなる κ の境目</b>を見つけよう。</p>
+      <p class="note">試験＝5秒動かして、塔の高さが最初の 85% 以上なら合格。<br>★1：κ が 1 より小さくても全部のエンジンで合格<br>★2：全エンジンが合格する一番小さい κ を確定（そこで合格、0.05 下で不合格）<br>★3：6 エンジンそれぞれの境目を確定</p>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>κ=1 では箱はかたい積み木。κ を下げると、箱が「4つの小さな粒をばねでつないだもの」に変わり、やわらかくなります。</dd>
+        <dt>なぜ？</dt>
+        <dd>かたい箱は、上の箱の重さをそのまま下へ伝えます。ばねの箱は、縮んだ分しか押し返せないので、やわらかすぎるとつぶれます。</dd>
+        <dt>身近な例</dt>
+        <dd>木の積み木は高く積めますが、スポンジの積み木は上の重さでへこんで傾き、倒れやすくなります。</dd>
+      </dl>
     </div>
     <div class="panel">
-      <h2>剛性 κ</h2>
-      <div class="row"><label>κ</label><input type="range" id="kappa" min="0.05" max="1" step="0.05" value="1"><span class="val" id="kVal">1.00 剛体</span></div>
-      <p class="note">κ=1：各エンジン本来の剛体（箱）。κ&lt;1：箱を角の小粒子（回転しない質点。2D:4個、3D:8個）と、対角を含むばねの網で置き換える。ばねの固有振動数 f = 2 + 28κ [Hz]、減衰比 ζ = 0.3。</p>
+      <h2>かたさ κ</h2>
+      <div class="row"><label>κ</label><input type="range" id="kappa" min="0.05" max="1" step="0.05" value="1"><span class="val" id="kVal" style="min-width:88px">1.00 かたい</span></div>
+      <p class="note">κ=1：かたい箱。κ&lt;1：箱を「角の小さな粒（平面は4個、立体は8個）＋粒どうしをつなぐばね」に置き換える。κ が小さいほどばねがやわらかい。</p>
       <div class="btns">
         <button class="btn primary" id="trial">試験（5秒）</button>
         <button class="btn" id="shoot">球を撃つ</button>
@@ -42,39 +53,64 @@
     <div class="panel">
       <h2>計測</h2>
       <div class="meters">
-        <div class="meter"><div class="k">全合格の最小 κ</div><div class="v" id="mBest">—</div></div>
-        <div class="meter"><div class="k">シミュ時間</div><div class="v" id="mT">0.00 s</div></div>
+        <div class="meter"><div class="k">全部合格した一番小さい κ</div><div class="v" id="mBest">—</div></div>
+        <div class="meter"><div class="k">経過時間</div><div class="v" id="mT">0.00 s</div></div>
       </div>
       <div class="res" id="results" style="margin-top:8px"></div>
-      <div class="note" style="margin-top:8px">各エンジンの境目（合格した最小 κ）</div>
+      <div class="note" style="margin-top:8px">各エンジンの境目（合格した一番小さい κ）</div>
       <div class="res" id="limits"></div>
     </div>
     <div class="panel">
-      <h2>因果ログ</h2>
+      <h2>何が起きたか（力の伝わり方）</h2>
       <div class="causal" id="causal"></div>
+      <div id="rules" style="margin-top:6px"></div>
     </div>
     <div class="panel">
-      <h2>各エンジンの「剛体観」</h2>
+      <h2>エンジンごとのちがい</h2>
+      <p class="note" style="margin-top:0">どのエンジンも「物どうしがめり込まないように、少しずつずれを直す」計算をくり返しています。その<b>直し方</b>がエンジンごとにちがうので、同じ塔でも結果が少し変わります。</p>
       <ul class="eng-list">
-        <li><b>Matter.js</b> — 剛体は凸多角形。位置補正型の反復ソルバ。拘束の stiffness は「1ステップで誤差の何割を戻すか」なので、ばねは k·Δt²/m に換算して与える。</li>
-        <li><b>Planck.js</b>（Box2D 移植）— 逐次インパルス法。距離ジョイントに frequencyHz・dampingRatio を与えると「柔らかい拘束」になる。</li>
-        <li><b>p2.js</b> — Gauss-Seidel ソルバ＋SPOOK 安定化。剛体拘束そのものに ε（柔らかさ）があり、LinearSpring は力として加算。</li>
-        <li><b>Rapier</b>（Rust→WASM）— 速度ベース PGS／ソフト拘束。spring ジョイントは剛性 k [N/m] と減衰 c をそのまま持つ。</li>
-        <li><b>toxiclibs.js</b> — 剛体という概念がない。Verlet 粒子と距離拘束の反復緩和（Jakobsen 法）。「剛体」は強さ1のばね網を何度も解いた近似で、衝突も最小距離ばねで作る。</li>
-        <li><b>Oimo.js</b> — 3D。剛体は 6 自由度（§3.4）。κ&lt;1 では 8 粒子＋28 本の距離ジョイント（ばね付き）＝1箱あたり自由度 24。</li>
+        <li><b>Matter.js</b> — めり込んだ分の「位置」を直接もどす。</li>
+        <li><b>Planck.js</b> — ぶつかったときの「速さ」を直す（ゲームでよく使われる Box2D と同じ方法）。</li>
+        <li><b>p2.js</b> — かたいつなぎ目にも、ほんの少しやわらかさを持たせて安定させる。</li>
+        <li><b>Rapier</b> — 速い言語（Rust）で書かれ、ブラウザ内で高速に動く。</li>
+        <li><b>toxiclibs.js</b> — そもそも「かたい物」がなく、粒とばねだけで世界を作る。かたい箱も「とても強いばね」で近づけているだけ。</li>
+        <li><b>Oimo.js</b> — 立体（3D）。かたい箱の動き方の数は 6、粒にすると 1箱 24。</li>
       </ul>
+      <details class="adv">
+        <summary>発展：計算方法の正式名</summary>
+        <ul class="eng-list">
+          <li>Matter.js：位置補正型の反復ソルバ。拘束の stiffness は「1ステップで誤差の何割を戻すか」なので、ばね定数は k·Δt²/m に換算。</li>
+          <li>Planck.js：逐次インパルス法。DistanceJoint の frequencyHz・dampingRatio でソフト拘束。</li>
+          <li>p2.js：Gauss-Seidel ソルバ＋SPOOK 安定化。LinearSpring は力として加算。</li>
+          <li>Rapier：速度ベースの PGS（射影ガウス・ザイデル）＋ソフト拘束。spring ジョイントは k [N/m] と減衰 c。</li>
+          <li>toxiclibs.js：Verlet 積分と距離拘束の反復緩和（Jakobsen 法）。</li>
+          <li>Oimo.js：3D 剛体（6自由度）。κ&lt;1 は 8 粒子＋28 本の距離ジョイント（ばね付き）。</li>
+          <li>ばね：固有振動数 f = 2 + 28κ [Hz]、減衰比 ζ = 0.3、k = m(2πf)²、c = 2ζ√(km)。</li>
+        </ul>
+      </details>
     </div>
     <div class="panel">
       <h2>理論</h2>
-      <div class="formula">剛体の自由度（§3.4）
-  3D: 3+2+1 = 6　 2D 平面運動: 3（§3.7）
-粒子 N 個にばらすと 3N（2D は 2N）
-  塔6段: 剛体 6×3=18 ↔ 粒子 24×2=48（2D）
-                6×6=36 ↔ 粒子 48×3=144（3D）
+      <div class="formula">かたい物（剛体）＝どの2点の距離も変わらない物
 
+動き方の数（自由度）
+  平面のかたい箱：3（左右・上下の位置＋向き）
+  立体のかたい箱：6（位置3＋向き3）
+  ばらばらの粒 N 個：平面 2N、立体 3N
+つまり… 粒にすると、計算する数が何倍にも増える
+  塔6段（平面）：かたい箱 18 ↔ 粒 48
+
+つりあい：塔が止まっているとき、力の合計は 0
+ばねの箱は、上の重さ分だけ縮んで押し返す
+  縮み ≈ 上に乗っている重さ ÷ ばね定数
+つまり… ばねがやわらかいほど大きく縮み、塔が低くなる</div>
+      <details class="adv">
+        <summary>発展</summary>
+        <div class="formula">剛体の自由度（教科書 §3.4）3D: 3+2+1 = 6
+つりあい（3–1）ΣF_i = 0
 ばね:  k = m_p (2πf)²,  c = 2ζ√(k m_p)
-つりあい（3–1）ΣF_i = 0 が成り立つには
-下段のばねが上の重さ分だけ縮む: Δx ≈ ΣMg / k</div>
+下段の縮み Δx ≈ ΣMg / k</div>
+      </details>
     </div>
     <div class="ref">参照: 小原「力学A 第3章 剛体」§3.2, 3.4, 3.7 ／ 溝口ら「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 ／ Matter.js 0.19.0, Planck.js 1.0.0, p2.js 0.7.1, Rapier2D 0.14.0, toxiclibsjs 0.3.3, Oimo.js 1.0.9</div>
   </aside>
@@ -113,7 +149,7 @@ function matterEngine() {
   const M = Matter, S = 100;        // 1 m = 100 px, Matter は y 下向き
   let eng, boxes, ball, soft;
   return {
-    name: 'Matter.js', solver: '位置補正・反復', lib: 'Matter.js',
+    name: 'Matter.js', solver: '位置を直接直す', lib: 'Matter.js',
     init(kappa) {
       eng = M.Engine.create(); eng.gravity.y = 0.98; // 0.98 × 0.001 × 100² ≒ 9.8 m/s²
       eng.positionIterations = 10; eng.velocityIterations = 8; eng.constraintIterations = 20;
@@ -158,7 +194,7 @@ function planckEngine() {
   const P = planck, V = planck.Vec2;
   let world, boxes, ball, soft;
   return {
-    name: 'Planck.js', solver: '逐次インパルス (Box2D)', lib: 'Planck.js',
+    name: 'Planck.js', solver: '速さを直す（Box2D 方式）', lib: 'Planck.js',
     init(kappa) {
       world = new P.World({ gravity: V(0, -G) });
       world.createBody().createFixture(P.Edge(V(-30, 0), V(30, 0)), { friction: FRICTION });
@@ -207,7 +243,7 @@ function planckEngine() {
 function p2Engine() {
   let world, boxes, ball, soft, sub = 4;
   return {
-    name: 'p2.js', solver: 'Gauss-Seidel + SPOOK', lib: 'p2.js',
+    name: 'p2.js', solver: '少しやわらかいつなぎ目', lib: 'p2.js',
     init(kappa) {
       world = new p2.World({ gravity: [0, -G] });
       world.defaultContactMaterial.friction = FRICTION;
@@ -257,7 +293,7 @@ function p2Engine() {
 function rapierEngine(R) {
   let world, boxes, ball, soft;
   return {
-    name: 'Rapier2D', solver: 'PGS ソフト拘束 (WASM)', lib: 'Rapier2D',
+    name: 'Rapier2D', solver: 'Rust 製で高速', lib: 'Rapier2D',
     init(kappa) {
       if (world) world.free();
       world = new R.World({ x: 0, y: -G });
@@ -336,7 +372,7 @@ function toxiEngine(T) {
     }
   }
   return {
-    name: 'toxiclibs.js', solver: 'Verlet + 反復緩和', lib: 'toxiclibs.js',
+    name: 'toxiclibs.js', solver: '粒とばねだけの世界', lib: 'toxiclibs.js',
     init(kappa) {
       kap = kappa;
       phys = new VerletPhysics2D(null, ITER, 0, 1);
@@ -385,7 +421,7 @@ function toxiEngine(T) {
       return out;
     },
     dof() { return 2 * 9 * NB; },
-    dofNote: '剛体概念なし'
+    dofNote: 'かたい物なし'
   };
 }
 
@@ -399,7 +435,7 @@ function oimoEngine() {
     return [ix * qw + iw * -qx + iy * -qz - iz * -qy, iy * qw + iw * -qy + iz * -qx - ix * -qz, iz * qw + iw * -qz + ix * -qy - iy * -qx];
   };
   return {
-    name: 'Oimo.js（3D）', solver: '3D 剛体 6自由度', lib: 'Oimo.js', is3D: true,
+    name: 'Oimo.js（3D）', solver: '立体（3D）', lib: 'Oimo.js', is3D: true,
     init(kappa) {
       if (world) world.clear();
       world = new OIMO.World({ timestep: DT, iterations: 10, broadphase: 2, worldscale: 1, random: false, info: false, gravity: [0, -G, 0] });
@@ -503,9 +539,9 @@ function shootAll() {
   shot = true;
   engines.forEach((e, i) => { try { e.shoot(); } catch (err) { stats[i].err = String(err.message || err); } });
   RV.sfx.thud(0.8);
-  log.add('球を発射：球が塔の下段を押す（作用）', [3], { t: simT });
-  if (kappa >= 1) log.add('剛体の塔：押された箱は全体が同時に動き出す', [4, 1], { arrow: true, t: simT });
-  else log.add('粒子の塔：接触した粒子から動き、ばねの伸縮で順に伝わる', [3, 5], { arrow: true, t: simT });
+  log.add('球を発射：球が塔の下の箱を押す', [2], { t: simT });
+  if (kappa >= 1) log.add('かたい箱：押された箱は全体がいっしょに動き出す', [4, 1], { arrow: true, t: simT });
+  else log.add('ばねの箱：当たった粒から動き、ばねが縮んで少しずつ伝わる', [5], { arrow: true, t: simT });
 }
 
 function step() {
@@ -549,8 +585,8 @@ function finishTrial() {
   tested[key(k)] = rows.map(r => r.ok);
   const allOk = rows.every(r => r.ok);
   RV.$('#results').innerHTML = `<span>κ=${k.toFixed(2)} の試験</span><span></span>` + rows.map(r => `<span>${r.name}</span><span class="${r.ok ? 'ok' : 'ng'}">${(r.h * 100).toFixed(0)}% ${r.ok ? '合格' : '崩壊'}</span>`).join('');
-  rows.forEach(r => { if (!r.ok) log.add(`${r.name}: 下段のばねが上の重さを支えきれず縮んだ（反作用を返す根拠＝「動かない」が失われた）`, [5, 6], { t: simT }); });
-  if (allOk) log.add(`κ=${k.toFixed(2)}：全エンジンで塔が立った（ΣF=0 のつりあい (3–1)）`, [2, 9], { t: simT, force: true });
+  rows.forEach(r => { if (!r.ok) log.add(`${r.name}：下の箱のばねが上の重さに負けて縮み、塔が崩れた`, [5, 6], { t: simT }); });
+  if (allOk) log.add(`κ=${k.toFixed(2)}：全エンジンで塔が立った（力がつりあっている）`, [2, 9], { t: simT, force: true });
   const an = analyze();
   RV.$('#mBest').textContent = an.A === null ? '—' : (an.A / 100).toFixed(2) + (an.allKnown ? ' 確定' : ' ?');
   RV.$('#limits').innerHTML = an.perEngine.map(p => `<span>${p.name}</span><span class="${p.known ? 'ok' : ''}">${p.limit === null ? '—' : p.limit.toFixed(2)}${p.limit === null ? '' : p.known ? ' 確定' : ' ?'}</span>`).join('');
@@ -560,9 +596,9 @@ function finishTrial() {
     RV.sfx.win();
     const msg = [
       '',
-      'κ&lt;1 でも、ばねが十分に固ければ塔は立つ。つりあい ΣF=0（3–1）は、下段のばねが「縮んだ分だけ押し返す」ことで実現している（原理5）。',
-      '全エンジンが耐えられる境目が決まった。いちばん先に崩れるエンジンが全体の境目を決めている。',
-      '6 エンジンすべての境目が決まった。同じ κ（同じばねの固有振動数）でも、拘束の解き方の違いで「どこまで剛体のふりができるか」が変わる。'][an.stars];
+      '少しやわらかくても塔は立った。<b>なぜ？</b> 下の箱のばねが、縮んだ分だけ上の重さを押し返しているから。ベッドのマットレスが、少し沈んで体を支えるのと同じだ。',
+      '全部のエンジンで立つ境目が決まった。<b>なぜ一番弱いエンジンで決まる？</b> 鎖の強さが一番弱い輪で決まるのと同じで、一番先に崩れるエンジンが全体の境目になる。',
+      '6 エンジンすべての境目が決まった。<b>なぜ境目がちがう？</b> 同じかたさでも、計算のやり方がちがうから。同じ材料でも、作る人によって積み木の出来が少しちがうのと似ている。'][an.stars];
     RV.modal(`実験室　★${an.stars}`, `<p>評価 <span class="stars">${'★'.repeat(an.stars)}${'☆'.repeat(3 - an.stars)}</span></p><p>${msg}</p>`);
   } else allOk ? RV.sfx.tone(660) : RV.sfx.fail();
 }
@@ -572,9 +608,9 @@ window.__lab = { engines, stats, tested, analyze, get simT() { return simT; }, h
 // ---------- UI ----------
 RV.$('#kappa').addEventListener('input', e => {
   kappa = +e.target.value;
-  RV.$('#kVal').textContent = kappa.toFixed(2) + (kappa >= 1 ? ' 剛体' : '');
+  RV.$('#kVal').textContent = kappa.toFixed(2) + (kappa >= 1 ? ' かたい' : '');
   resetAll();
-  log.add(kappa >= 1 ? 'κ=1：各エンジンの剛体（2点間距離が不変）' : `κ=${kappa.toFixed(2)}：箱を粒子＋ばね網に置換（f=${springParams(kappa, 1).f.toFixed(1)} Hz）`, kappa >= 1 ? [4] : [], { t: 0 });
+  log.add(kappa >= 1 ? 'κ=1：かたい箱（どの2点の距離も変わらない）' : `κ=${kappa.toFixed(2)}：箱を「粒＋ばね」に置き換えた`, kappa >= 1 ? [4] : [], { t: 0 });
 });
 RV.$('#reset').onclick = () => resetAll();
 RV.$('#shoot').onclick = () => { if (trial) return; if (shot) resetAll(); shootAll(); };
@@ -624,7 +660,7 @@ function render() {
     ctx.fillStyle = h >= 0.85 ? '#6fdc8c' : '#ff5d73';
     ctx.fillText(`高さ ${(h * 100).toFixed(0)}%`, ox + pw - 10, oy + 18);
     ctx.fillStyle = '#8d9aab';
-    ctx.fillText(`自由度 ${dof}${e.dofNote ? '（' + e.dofNote + '）' : ''}`, ox + pw - 10, oy + 32);
+    ctx.fillText(`動き方の数 ${dof}${e.dofNote ? '（' + e.dofNote + '）' : ''}`, ox + pw - 10, oy + 32);
     ctx.fillText(`${stats[i].ms.toFixed(2)} ms/step`, ox + pw - 10, oy + 46);
     ctx.textAlign = 'left';
     ctx.restore();
@@ -634,12 +670,14 @@ function render() {
 }
 
 resetAll();
-log.add('κ=1：各エンジンの剛体（2点間距離が不変）', [4], { t: 0 });
+log.add('κ=1：かたい箱（どの2点の距離も変わらない）', [4], { t: 0 });
+RV.rulesList('#rules', [1, 2, 4, 5, 6, 9]);
 RV.loop(step, render, DT);
 RV.modal('実験室　エンジン総当たり', `
-  <p>剛体が消えていく世界で、物理エンジンたちはそれぞれ違うやり方で「剛体」を作っている。ここでは <b>同じ塔</b> を 6 つのエンジンで同時に立てて比べる。</p>
-  <p>κ を下げると、箱は「角の粒子＋ばね」に置き換わる。剛体なら上の箱の重さは瞬時にそのまま地面へ伝わる（原理4）が、ばねの塔は<b>縮むことでしか</b>押し返せない（原理5）。</p>
-  <p><b>目的:</b> κ を変えて「試験」をくり返し、各エンジンが塔を支えきれなくなる κ の境目を測る（合格した κ と、その 0.05 下の不合格をそろえると「確定」）。「球を撃つ」で衝撃の伝わり方も比べてみよう。</p>
+  <p>剛体が消えていく世界で、6 つの物理エンジン（物の動きを計算するプログラム）は、それぞれのやり方で「かたい物」を必死に作り続けている。どのエンジンが最後まで持ちこたえるか、確かめよう。</p>
+  <p><b>やること：</b>かたさ κ を下げながら「試験」をくり返し、塔が崩れはじめる境目を見つける。</p>
+  <p><b>操作：</b>κ のスライダーを動かすと箱がやわらかくなり、「試験（5秒）」で6つの塔が同時に5秒間動く。「球を撃つ」で塔に球をぶつけられる。</p>
+  <p class="note">木の積み木は高く積めるが、スポンジの積み木は上の重さでへこんで倒れやすい。</p>
   ${Object.keys(failed).length ? '<p style="color:var(--bad)">読み込めなかったエンジン: ' + Object.keys(failed).join(', ') + '</p>' : ''}`,
   [{ label: '始める', primary: true }]);
 </script>

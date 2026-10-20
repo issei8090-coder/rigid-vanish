@@ -25,23 +25,34 @@
   <aside class="rv-side">
     <div class="panel mission">
       <h2>ミッション</h2>
-      <p>世界の剛性 κ が 0 になる前に、<b style="color:var(--rigid)">最後の剛体コア</b>（水色）を右下の<b style="color:var(--good)">ゴール槽</b>へ運べ。</p>
-      <p class="note">コアの粒子の 60% 以上がゴール槽に 1.5 秒とどまればクリア。残った κ で★が決まる（κ≥0.50 ★3 / ≥0.30 ★2 / それ以外 ★1）。</p>
+      <p>世界の<b>かたさ κ</b> が 0 になる前に、<b style="color:var(--rigid)">最後のかたい塊（コア）</b>（水色）を右下の<b style="color:var(--good)">ゴール</b>へ運ぼう。</p>
+      <p class="note">コアの 6 割以上がゴールに 1.5 秒入っていればクリア。早く運ぶほど★が増える（残り κ が 0.50 以上で★3、0.30 以上で★2、それ以外は★1）。</p>
+    </div>
+    <div class="panel easy">
+      <h2>やさしい解説</h2>
+      <dl>
+        <dt>何が起きる？</dt>
+        <dd>時間がたつと、世界の物が「かたい → ゴムみたい → どろどろ → 水」と溶けていきます。</dd>
+        <dt>なぜ？</dt>
+        <dd>この世界の物は小さな粒の集まりです。粒どうしの距離を固定する仕組みが弱まると、形を保てなくなります。</dd>
+        <dt>身近な例</dt>
+        <dd>氷は傾けると丸ごと滑りますが、溶けて水になると広がって流れます。ゼリーは押すとぷるぷる揺れて、押された所から順に動きます。</dd>
+      </dl>
     </div>
     <div class="panel">
-      <h2>レベル（κ の減衰速度）</h2>
+      <h2>レベル（溶けきるまでの時間）</h2>
       <div class="seg" id="levels">
         <button data-l="0" class="on">1: 120秒</button><button data-l="1">2: 85秒</button><button data-l="2">3: 60秒</button>
       </div>
     </div>
     <div class="panel">
-      <h2>操作 — 重力の向きを回す</h2>
+      <h2>操作：重力の向きを回す</h2>
       <div class="grav-pad">
         <button class="btn" id="rotL" title="反時計回り">⟲</button>
         <button class="btn" id="gDown" title="真下に戻す">↓</button>
         <button class="btn" id="rotR" title="時計回り">⟳</button>
       </div>
-      <p class="note">← / → キー（押している間回転）、またはステージをドラッグするとその方向が「下」になる。</p>
+      <p class="note">← / → キーを押している間、重力が回ります。画面をドラッグすると、その方向が「下」になります。</p>
       <div class="btns" style="margin-top:6px">
         <button class="btn" id="retry">やり直す</button>
         <button class="btn" id="renderMode">描画: メタボール</button>
@@ -50,38 +61,45 @@
     <div class="panel">
       <h2>計測</h2>
       <div class="meters">
-        <div class="meter"><div class="k">世界の剛性 κ</div><div class="v" id="mK">1.00</div></div>
+        <div class="meter"><div class="k">世界のかたさ κ</div><div class="v" id="mK">1.00</div></div>
         <div class="meter"><div class="k">コアの状態</div><div class="v" id="mState" style="font-size:13px">剛体</div></div>
-        <div class="meter"><div class="k">2点間距離のばらつき σ</div><div class="v" id="mSigma">0.0%</div></div>
-        <div class="meter"><div class="k">コアの自由度</div><div class="v" id="mDof">3</div></div>
-        <div class="meter"><div class="k">ゴール内のコア</div><div class="v" id="mGoal">0%</div></div>
-        <div class="meter"><div class="k">粒子数 / 描画</div><div class="v" id="mN" style="font-size:12px">-</div></div>
+        <div class="meter"><div class="k" title="コアの中の2つの粒の距離が、最初からどれだけ変わったか">粒どうしの距離のズレ</div><div class="v" id="mSigma">0.0%</div></div>
+        <div class="meter"><div class="k" title="位置と向きを決めるのに必要な数（自由度）">コアの動き方の数</div><div class="v" id="mDof">3</div></div>
+        <div class="meter"><div class="k">ゴールに入った割合</div><div class="v" id="mGoal">0%</div></div>
+        <div class="meter"><div class="k">粒の数 / 描き方</div><div class="v" id="mN" style="font-size:12px">-</div></div>
       </div>
       <div style="margin-top:8px">
-        <div class="note">城（周囲の粒子）の相</div>
+        <div class="note">城の状態</div>
         <div class="phase" id="phCastle"></div>
-        <div class="note" style="margin-top:4px">コアの相</div>
+        <div class="note" style="margin-top:4px">コアの状態</div>
         <div class="phase" id="phCore"></div>
       </div>
     </div>
     <div class="panel">
-      <h2>因果ログ</h2>
+      <h2>何が起きたか（力の伝わり方）</h2>
       <div class="causal" id="causal"></div>
+      <div id="rules" style="margin-top:6px"></div>
     </div>
     <div class="panel">
       <h2>理論</h2>
-      <div class="formula">剛体の定義（§3.1）
-  |r_i − r_j| = 一定（すべての i, j）
-→ σ = rms((|r_i−r_j| − d₀)/d₀) = 0
+      <div class="formula">剛体（かたい物）＝どの2点の距離も変わらない物
+つまり… 粒どうしの距離のズレが 0% なら剛体
 
-平面運動の自由度（§3.7）＝ 3（x_G, y_G, φ）
-  M ẍ_G = ΣX_i, M ÿ_G = ΣY_i   (3–47)
-  I_G φ̈ = N_G                  (3–49)
-剛体でなくなった粒子 N 個 ＝ 自由度 2N
+動き方の数（自由度）
+  かたい物（平面）：3（左右・上下の位置＋向き）
+  ばらばらの粒 N 個：2N
+つまり… 溶けると、位置を決めるのに必要な数が一気に増える
 
-原理4: 剛体は力を瞬時に伝える（透過伝達性）
-原理10: 加速度系／重力には「場」が生じる</div>
-      <p class="note">LiquidFun の <code>b2_rigidParticleGroup</code> は粒子群に剛体拘束を課す。κ の低下に合わせて rigid → elastic → spring → viscous → water と拘束を外していく（群を同じ粒子位置で作り直す）。</p>
+重力は全部の粒に同じように働く（重さ mg）
+つまり… 重力の向きを変えれば、コア全体を動かせる</div>
+      <details class="adv">
+        <summary>発展</summary>
+        <div class="formula">ズレ σ = √(平均((|r_i−r_j| − d₀)/d₀)²)
+剛体の平面運動の式（教科書 3-47, 3-49）
+  M ẍ_G = ΣX_i,  M ÿ_G = ΣY_i
+  I_G φ̈ = N_G</div>
+        <p class="note">LiquidFun の <code>b2_rigidParticleGroup</code> は粒の集まりを「形を固定する仕組み」で一体にします。κ が下がるたびに、同じ位置の粒を rigid → elastic → spring → viscous → water の設定で作り直しています。</p>
+      </details>
     </div>
     <div class="ref">参照: 小原「力学A 第3章 剛体」(兵庫県立大) §3.1, 3.4, 3.7 ／ 溝口・平嶋・堀口「力と運動に関する因果推論理論」人工知能学会論文誌 31(4), 2016 ／ LiquidFun (liquidfun-wasm 7.0.0), gpu.js 2.16.0</div>
   </aside>
@@ -101,7 +119,7 @@ const WW = 16, WH = 10;
 const R = 0.075;                       // 粒子半径
 const GOAL = { x0: 12.25, x1: 16, y0: 0, y1: 3.6 };
 const LEVELS = [120, 85, 60];          // κ が 1→0 になるまでの秒数
-const PHASES = ['剛体', '弾性', 'ばね', '粘性', '水'];
+const PHASES = ['かたい', 'ゴム状', 'ばね状', 'どろどろ', '水'];
 const CASTLE_TH = [0.85, 0.7, 0.55, 0.4];   // この κ を下回ると次の相へ
 const CORE_TH = [0.6, 0.45, 0.3, 0.15];
 
@@ -241,8 +259,8 @@ function reset(startNow = true) {
   kappa = 1; simT = 0; goalHold = 0; over = false; castlePhase = 0;
   setGravity(-Math.PI / 2);
   log.reset();
-  log.add('世界の剛性 κ=1。コアは剛体：任意の2粒子間距離が一定（§3.1）', [4]);
-  log.add('重力の「場」がコア全体に一様に作用', [10]);
+  log.add('κ=1：コアはかたい。どの2つの粒の距離も変わらない', [4]);
+  log.add('重力がコアの全部の粒に同じように働いている', [1]);
   started = startNow;
 }
 
@@ -253,7 +271,7 @@ const hold = (el, d) => {
   ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, () => { if (rotDir === d) rotDir = 0; }));
 };
 hold(RV.$('#rotL'), 1); hold(RV.$('#rotR'), -1);
-RV.$('#gDown').onclick = () => { setGravity(-Math.PI / 2); log.add('重力を真下へ戻す', [10], { arrow: true, t: simT }); };
+RV.$('#gDown').onclick = () => { setGravity(-Math.PI / 2); log.add('重力を真下に戻した', [1], { arrow: true, t: simT }); };
 addEventListener('keydown', e => { if (e.key === 'ArrowLeft') rotDir = 1; if (e.key === 'ArrowRight') rotDir = -1; if (e.key === 'ArrowDown') RV.$('#gDown').click(); });
 addEventListener('keyup', e => { if ((e.key === 'ArrowLeft' && rotDir === 1) || (e.key === 'ArrowRight' && rotDir === -1)) rotDir = 0; });
 let dragging = false;
@@ -264,9 +282,10 @@ function dragTo(e) {
 }
 stage.addEventListener('pointerdown', e => { dragging = true; stage.setPointerCapture(e.pointerId); dragTo(e); });
 stage.addEventListener('pointermove', e => { if (dragging) dragTo(e); });
-stage.addEventListener('pointerup', () => { dragging = false; log.add(`重力の向き ${(gAngle * 180 / Math.PI).toFixed(0)}° → 場の力 mg がコアの各粒子に作用`, [10, 1], { arrow: true, t: simT }); });
+stage.addEventListener('pointerup', () => { dragging = false; log.add(`重力の向きを ${(gAngle * 180 / Math.PI).toFixed(0)}° にした → 全部の粒がその向きに引かれる`, [1], { arrow: true, t: simT }); });
 RV.$('#retry').onclick = () => reset();
 RV.$('#renderMode').onclick = e => { renderMeta = !renderMeta; e.target.textContent = '描画: ' + (renderMeta ? 'メタボール' : '粒子'); };
+RV.rulesList('#rules', [1, 4]);
 RV.$('#levels').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   level = +b.dataset.l;
@@ -291,17 +310,17 @@ function step(dt) {
       if (o.kind === 'core') {
         RV.sfx.fail();
         const msg = [
-          '', 'コアの剛体拘束が外れた：押した力は瞬時には伝わらず、粒子間の弾性で順に伝播する',
-          'コアは「ばね」でつながるだけになった：距離はもう一定でない',
-          'コアは粘性流体：形を保てない', 'コアは水になった：自由度 2N、慣性モーメントも定義できない'][want];
+          '', 'コアがゴムのようになった：押した力が一瞬では伝わらず、押された所から順に伝わる',
+          'コアの粒はばねでつながっているだけ：距離はもう一定ではない',
+          'コアがどろどろになった：形を保てない', 'コアが水になった：動き方の数は 2N。もう「かたい物」の式は使えない'][want];
         log.add(msg, want === 1 ? [4, 3] : [4], { t: simT, force: true });
-        RV.toast(stage, 'コア: ' + PHASES[want] + ' 相へ');
+        RV.toast(stage, 'コアが「' + PHASES[want] + '」になった');
       }
     }
   }
   if (pc !== castlePhase) {
     castlePhase = pc;
-    log.add(`城が「${PHASES[pc]}」相に融解（κ<${CASTLE_TH[pc - 1]}）`, [4], { t: simT });
+    log.add(`城が「${PHASES[pc]}」になった（κ<${CASTLE_TH[pc - 1]}）`, [4], { t: simT });
   }
   world.Step(dt, 6, 2, 3);
   const st = coreStats();
@@ -334,14 +353,15 @@ function finish(win) {
     const stars = Math.max(1, RV.grade(1 - kappa, [0.5, 0.7, 1.01]));
     RV.saveStars('c7', stars);
     RV.sfx.win();
-    log.add(`ゴール到達。残り κ=${kappa.toFixed(2)}`, [], { t: simT, force: true });
+    log.add(`ゴール！ 残り κ=${kappa.toFixed(2)}`, [], { t: simT, force: true });
     RV.modal('最後の剛体を届けた', `<p>残り κ = <b>${kappa.toFixed(2)}</b>　評価 <span class="stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span></p>
-      <p>剛体とは「どの2点の距離も変わらない」理想化だった（§3.1）。それが消えた世界では、力は一瞬では伝わらず（原理4の破れ）、物体の配置は 3 個の数ではなく 2N 個の数でしか決まらない。</p>`,
+      <p>最後の剛体は、溶けきる前にゴールへたどり着いた。</p>
+      <p><b>なぜ運べた？</b> かたいうちは、どこを押しても全体がいっしょに動くから。氷はお盆を傾ければ丸ごと滑るが、水になるとこぼれて広がる。</p>`,
       [{ label: 'もう一度', onClick: reset }, { label: '世界地図へ', primary: true, onClick: () => location.href = '../index.html' }]);
   } else {
     RV.sfx.fail();
-    log.add('κ=0：世界から剛体が消えた', [], { t: simT, force: true });
-    RV.modal('κ = 0', `<p>剛性が尽き、コアも水になって散った。重力の向きを早めに使って、コアが「剛体のうちに」城を越えよう。</p>`,
+    log.add('κ=0：世界からかたい物が消えた', [], { t: simT, force: true });
+    RV.modal('κ = 0', `<p>世界から最後の剛体が消えた。コアは水になって流れ去った。</p><p><b>なぜ？</b> 溶けた物は、押された所から少しずつしか動かず、まとまって運べない。こぼれた水を手で集めにくいのと同じだ。かたいうちに、早めに重力を回して城を越えよう。</p>`,
       [{ label: 'やり直す', primary: true, onClick: reset }]);
   }
 }
@@ -500,12 +520,10 @@ RV.fitCanvas(cv, resize);
 reset(false);
 RV.loop(step, render, 1 / 60);
 RV.modal('終章　剛体ゼロ', `
-  <p>剛体――<b>どの2点の距離も変わらない物体</b>（§3.1）――が、世界から消えつつある。</p>
-  <p>この世界の物はすべて粒子でできている。いまはまだ LiquidFun の「剛体拘束」で形を保っているが、剛性 κ が下がるにつれ
-  <b>剛体 → 弾性体 → ばね → 粘性流体 → 水</b> と融けていく。城が先に融け、最後に水色のコアが融ける。</p>
-  <p>あなたにできるのは<b>重力の向きを回す</b>ことだけ（原理10：重力は場の力として全粒子に一様に働く）。
-  コアが剛体のうちは、どこを押されても全体が一斉に動く（原理4：透過伝達性）。融けたあとは、押された所から順にしか動かない。</p>
-  <p><b>目的:</b> κ=0 になる前にコアを右下のゴール槽へ。</p>`,
+  <p>剛体――<b>どの2点の距離も変わらない物体</b>――が、ついに世界から消えようとしている。城も、あなたが守ってきた最後のかたい塊（コア）も、粒になって溶けはじめた。</p>
+  <p><b>やること：</b>水色のコアが溶けきる前に、右下のゴールへ運ぶ。</p>
+  <p><b>操作：</b>← / → キー（または右の ⟲ ⟳ ボタン）で重力の向きが回り、世界中の粒がその方向へ流れる。画面をドラッグすると、その方向が「下」になる。</p>
+  <p class="note">時間がたつと、かたい → ゴム状 → どろどろ → 水 と溶けていく。氷が溶けて水になるのと同じだ。</p>`,
   [{ label: '開始', primary: true, onClick: () => { started = true; } }]);
 </script>
 </body>
